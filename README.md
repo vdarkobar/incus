@@ -1,35 +1,53 @@
-ZFS Setup:
-Debian Version & Backports: Detects Debian version, adds backports repo for ZFS.
+## ZFS Setup
 
-Install ZFS: Updates package list, installs zfs-dkms, zfsutils-linux.
+- **Debian Version & Backports:**  
+  Detects Debian version, adds backports repo for ZFS.
 
-Enable ZFS Services: Ensures ZFS services start on boot.
+- **Install ZFS:**  
+  Updates package list, installs `zfs-dkms`, `zfsutils-linux`.
 
-Configure ZFS ARC:
+- **Enable ZFS Services:**  
+  Ensures ZFS services start on boot.
 
-Sets ARC max to 20% of RAM (capped at 16 GiB).
+- **Configure ZFS ARC:**  
+  - Sets ARC max to 20% of RAM (capped at 16 GiB).  
+  - Writes configuration to `/etc/modprobe.d/zfs.conf` for persistence.
 
-Writes configuration to /etc/modprobe.d/zfs.conf for persistence.
+---
 
-KVM Setup:
-Virtualization Check: Verifies CPU virtualization support (VT-x/AMD-V).
+## KVM Setup
 
-Install KVM & Tools: Installs qemu-kvm, libvirt, and related packages.
+- **Virtualization Check:**  
+  Verifies CPU virtualization support (VT-x/AMD-V).
 
-User Access: Adds current user to kvm and libvirt groups.
+- **Install KVM & Tools:**  
+  Installs `qemu-kvm`, `libvirt`, and related packages.
 
-Enable Libvirt: Ensures libvirtd service runs at boot.
+- **User Access:**  
+  Adds current user to `kvm` and `libvirt` groups.
 
-Incus Setup:
-Install Prerequisites: Installs gnupg2, wget.
+- **Enable Libvirt:**  
+  Ensures `libvirtd` service runs at boot.
 
-Add Incus Repo: Downloads Zabbly keys, configures source list.
+---
 
-Install Incus: Installs incus, incus-ui-canonical.
+## Incus Setup
 
-GUI Support (Optional): Installs virt-viewer if not headless.
+- **Install Prerequisites:**  
+  Installs `gnupg2`, `wget`.
 
-User Permissions: Adds user to incus-admin group.
+- **Add Incus Repo:**  
+  Downloads Zabbly keys, configures source list.
+
+- **Install Incus:**  
+  Installs `incus`, `incus-ui-canonical`.
+
+- **GUI Support (Optional):**  
+  Installs `virt-viewer` if not headless.
+
+- **User Permissions:**  
+  Adds user to `incus-admin` group.
+
 
   
 ###  *incus installer script*:
