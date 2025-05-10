@@ -14,7 +14,7 @@ sudo zpool create -f \
 zfs create tank/incus -o mountpoint=/mnt/incus
 ```  
 
-Point Incus to ZFS Dataset during init `incus admin init`
+Point Incus to ZFS Dataset during init phase  
   
 ###  *Incus installer script*:
 ```bash
@@ -38,4 +38,12 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 - **Add Incus Repo:** Downloads Zabbly keys, configures source list.  
 - **Install Incus:** Installs `incus`, `incus-ui-canonical`.  
 - **GUI Support (Optional):** Installs `virt-viewer` if not headless.  
-- **User Permissions:** Adds user to `incus-admin` group.  
+- **User Permissions:** Adds user to `incus-admin` group.
+  
+Initialize Incus
+```bas
+incus admin init
+```
+
+
+
