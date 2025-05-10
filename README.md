@@ -57,25 +57,31 @@ Initialize Incus
 incus admin init
 ```  
 
-Create a Bridge Interface on the host, edit your network configuration file:
+Create a Bridge Interface on the host, edit your network configuration file:  
+two net ports: *ens18,ens19*, first for host, second for the bridge  
 ```bash
 sudo nano /etc/network/interfaces
 ```
 
 Replace or add the following configuration:
 ```bash
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+source /etc/network/interfaces.d/*
+
 # The loopback network interface
 auto lo
 iface lo inet loopback
 
-# The primary network interface
+# The primary network interface (host connectivity)
 allow-hotplug ens18
-iface ens18 inet manual
+iface ens18 inet dhcp
 
 # Bridge interface for Incus containers/VMs
 auto br0
 iface br0 inet dhcp
-    bridge_ports ens18
+    bridge_ports ens19
     bridge_stp off
     bridge_fd 0
     bridge_maxwait 0
