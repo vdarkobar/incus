@@ -17,7 +17,7 @@ sudo zpool add -f tank cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi
 sudo zpool add -f tank spare /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5
 ```
 ```bash
-zfs create tank/incus -o mountpoint=/mnt/incus
+sudo zfs create tank/incus -o mountpoint=/mnt/incus
 ```  
 
 Point Incus to ZFS Dataset during init phase  
