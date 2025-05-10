@@ -29,7 +29,7 @@ Point Incus to ZFS Dataset during init phase
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script.sh)"
 ```
 
-  <br/>
+<br/>
 
 *ZFS Setup*
 - **Debian Version & Backports:** Detects Debian version, adds backports repo for ZFS.  
@@ -46,12 +46,12 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 *Incus Setup*
 - **Install Prerequisites:** Installs `gnupg2`, `wget`.  
 - **Add Incus Repo:** Downloads Zabbly keys, configures source list.  
-- **Install Incus:** Installs `incus`, `incus-ui-canonical`.
+- **Install Incus:** Installs `incus`, `incus-ui-canonical`.  
 - **GUI Support (Optional):** Installs `virt-viewer` if not headless.
-- **User Permissions:** Adds user to `incus-admin` group.
-
-  <br/>
-
+- **User Permissions:** Adds user to `incus-admin` group.  
+  
+<br/>
+  
 Initialize Incus
 ```bas
 incus admin init
