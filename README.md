@@ -47,7 +47,54 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 Initialize Incus
 ```bas
 incus admin init
+```  
+
+Create a Bridge Interface
+Edit your network configuration file:
+```bash
+sudo nano /etc/network/interfaces
 ```
 
+Replace or add the following configuration:
+```bash
+# The loopback network interface
+auto lo
+iface lo inet loopback
 
+# The primary network interface
+allow-hotplug ens18
+iface ens18 inet manual
+
+# Bridge interface for Incus containers/VMs
+auto br0
+iface br0 inet dhcp
+    bridge_ports ens18
+    bridge_stp off
+    bridge_fd 0
+    bridge_maxwait 0
+```
+
+Restart the networking service:
+```bash
+sudo systemctl restart networking.service
+```
+
+Check the current profile configuration:
+```bash
+incus profile show default
+```
+
+remove the conflicting eth0 configuration
+```bash
+incus profile device remove default eth0
+```
+
+Add the new bridged network configuration:
+```bash
+incus profile device add default eth0 nic nictype=bridged parent=br0 name=eth0
+```  
+  
+```bash
+
+```
 
