@@ -13,7 +13,9 @@ sudo zpool create -f \
 ```bash
 zfs create tank/incus -o mountpoint=/mnt/incus
 ```  
-    
+
+Point Incus to ZFS Dataset during init `incus admin init`
+  
 ###  *Incus installer script*:
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script.sh)"
