@@ -11,6 +11,10 @@ sudo zpool create -f \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3
 ```
 ```bash
+sudo zpool add -f tank cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4
+sudo zpool add -f tank spare /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5
+```
+```bash
 zfs create tank/incus -o mountpoint=/mnt/incus
 ```  
 
