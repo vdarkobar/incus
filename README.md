@@ -133,3 +133,6 @@ The container’s eth0 will be linked to this bridge, enabling it to obtain an I
 `name=eth0:`
 Sets the network interface name as it will appear inside the container.
 The container will see this network interface as eth0.
+
+It adds a network device to the default profile in Incus. The network device is configured as a bridged NIC using the br0 bridge from the host. Inside the container, the interface will be called eth0.  
+This configuration allows the container to have an IP address on the same local network as the host (like a physical machine on the same subnet).
