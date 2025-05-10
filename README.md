@@ -1,4 +1,19 @@
-  
+Create ZFS Pool and Incus Dataset, example:  
+```bash
+sudo zpool create -f \
+  -o ashift=12 \
+  -o autoexpand=on \
+  -O atime=off \
+  -O compression=lz4 \
+  tank raidz \
+  /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 \
+  /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2 \
+  /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3
+```
+```bash
+zfs create tank/incus -o mountpoint=/mnt/incus
+```  
+    
 ###  *Incus installer script*:
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script.sh)"
