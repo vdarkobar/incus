@@ -55,8 +55,7 @@ Initialize Incus
 incus admin init
 ```  
 
-Create a Bridge Interface
-Edit your network configuration file:
+Create a Bridge Interface on the host, edit your network configuration file:
 ```bash
 sudo nano /etc/network/interfaces
 ```
