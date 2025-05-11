@@ -141,7 +141,9 @@ This configuration allows the container to have an IP address on the same local 
 
 Enabling IOMMU on Debian
 ```bash
-# /etc/default/grub
+sudo nano /etc/default/grub
+```
+```bash
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
@@ -149,6 +151,6 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet preempt=voluntary intel_iommu=on amd_iommu=on 
 GRUB_CMDLINE_LINUX=""
 ```
 ```bash
-sudo update-grub && sudo reboot
+sudo update-grub && sudo reboot now
 ```
 
