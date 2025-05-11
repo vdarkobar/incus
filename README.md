@@ -136,3 +136,17 @@ The container will see this network interface as eth0.
 
 It adds a network device to the default profile in Incus. The network device is configured as a bridged NIC using the br0 bridge from the host. Inside the container, the interface will be called eth0.  
 This configuration allows the container to have an IP address on the same local network as the host (like a physical machine on the same subnet).
+
+<br/>
+
+enabling IOMMU on Debian
+```bash
+# /etc/default/grub
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=5
+GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
+GRUB_CMDLINE_LINUX_DEFAULT="quiet preempt=voluntary intel_iommu=on amd_iommu=on iommu.passthrough=1"
+GRUB_CMDLINE_LINUX=""
+```
+
+
