@@ -57,7 +57,7 @@ Initialize Incus
 incus admin init
 ```  
 
-Create **bridge interface** on the host machine (two network ports: *ens18,ens19*, first for host, second for the bridge) 
+Create **bridge interface** on the host machine (two network ports, first for host, second for the bridge, instance gets IP from the physical network, not internal subnet) 
 ```bash
 sudo nano /etc/network/interfaces
 ```
