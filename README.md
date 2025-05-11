@@ -148,5 +148,7 @@ GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
 GRUB_CMDLINE_LINUX_DEFAULT="quiet preempt=voluntary intel_iommu=on amd_iommu=on iommu.passthrough=1"
 GRUB_CMDLINE_LINUX=""
 ```
-
+```bash
+sudo update-grub && sudo reboot
+```
 
