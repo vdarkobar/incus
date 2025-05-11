@@ -139,7 +139,7 @@ This configuration allows the container to have an IP address on the same local 
 
 <br/>
 
-enabling IOMMU on Debian
+Enabling IOMMU on Debian
 ```bash
 # /etc/default/grub
 GRUB_DEFAULT=0
