@@ -22,11 +22,11 @@ sudo zpool create -f \
     /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG95030BHC480BGN 
 ```
 ```bash
-sudo zpool add -f tank cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4
-sudo zpool add -f tank spare /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5
+sudo zpool add -f local cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4
+sudo zpool add -f local spare /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5
 ```
 ```bash
-sudo zfs create tank/incus -o mountpoint=/mnt/incus
+sudo zfs create local/incus -o mountpoint=/mnt/incus
 ```  
 
 Point Incus to ZFS Dataset during init phase  
