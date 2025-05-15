@@ -9,21 +9,21 @@ sudo zpool create -f \
   -O compression=lz4 \
   local \
   raidz \
-  /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 \
-  /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2 \
-  /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3
+  /dev/disk/by-id/xxx1 \
+  /dev/disk/by-id/xxx2 \
+  /dev/disk/by-id/xxx3
 # or:
   local \
   mirror \
-    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 \
-    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2 \
+    /dev/disk/by-id/xxx1 \
+    /dev/disk/by-id/xxx2 \
   mirror \
-    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3 \
-    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4 
+    /dev/disk/by-id/xxx3 \
+    /dev/disk/by-id/xxx4 
 ```
 ```bash
-sudo zpool add -f local cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4
-sudo zpool add -f local spare /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5
+sudo zpool add -f local cache /dev/disk/by-id/xxx4
+sudo zpool add -f local spare /dev/disk/by-id/xxx5
 ```
 ```bash
 sudo zfs create local/incus -o mountpoint=/mnt/incus
