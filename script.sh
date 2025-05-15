@@ -115,7 +115,7 @@ if [ "$virt_support" -eq 0 ]; then
 fi
 
 # Installing KVM
-sudo apt update
+# sudo apt update
 sudo apt install -y --no-install-recommends \
     qemu-kvm \
     libvirt-daemon-system \
