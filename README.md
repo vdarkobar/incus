@@ -15,11 +15,11 @@ sudo zpool create -f \
 # or:
   local \
   mirror \
-    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG949401V3480BGN \
-    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG950309V8480BGN \
+    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 \
+    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2 \
   mirror \
-    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG950309WQ480BGN \
-    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG95030BHC480BGN 
+    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3 \
+    /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4 
 ```
 ```bash
 sudo zpool add -f local cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4
