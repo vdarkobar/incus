@@ -64,7 +64,7 @@ fi
 # Convert RAM to bytes
 TOTAL_RAM_BYTES=$((TOTAL_RAM_KB * 1024))
 
-# Calculate ARC max as 15% of total RAM
+# Calculate ARC max as 20% of total RAM
 ARC_LIMIT=$((TOTAL_RAM_BYTES * PERCENTAGE / 100))
 
 # Cap at 16 GiB
