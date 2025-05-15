@@ -62,7 +62,7 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 <br/>
   
 Initialize Incus
-```bas
+```bash
 incus admin init
 ```  
 
