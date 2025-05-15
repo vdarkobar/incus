@@ -7,10 +7,19 @@ sudo zpool create -f \
   -o autoexpand=on \
   -O atime=off \
   -O compression=lz4 \
-  tank raidz \
+  local \
+  raidz \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2 \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3
+# 
+  local \
+  mirror \
+    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG949401V3480BGN \
+    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG950309V8480BGN \
+  mirror \
+    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG950309WQ480BGN \
+    /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG95030BHC480BGN 
 ```
 ```bash
 sudo zpool add -f tank cache /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4
