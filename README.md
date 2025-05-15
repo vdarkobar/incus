@@ -12,7 +12,7 @@ sudo zpool create -f \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2 \
   /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3
-# 
+# or:
   local \
   mirror \
     /dev/disk/by-id/ata-INTEL_SSDSC2KG480G8_BTYG949401V3480BGN \
