@@ -163,7 +163,9 @@ incus remote add docker https://docker.io --protocol=oci
 ```
 example:
 ```bash
-incus create docker:nginx:latest web
+incus launch docker:nginx:latest web
+#
+incus launch docker:jgraph/drawio draw
 ```
 Upgrade:
 ```bash
