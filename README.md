@@ -55,12 +55,16 @@ sudo zpool add -f local spare /dev/disk/by-id/xxx5
 ```bash
 sudo zfs create local/incus
 ```  
+
 <br/>
+
 Initialize Incus (*Point Incus to ZFS Dataset during init phase*)
 ```bash
 incus admin init
 ```  
+
 <br/>
+
 Create **bridge interface** on the host machine (two network ports, first for host, second for the bridge, instance gets IP from the physical network, not internal subnet) 
 ```bash
 sudo nano /etc/network/interfaces
