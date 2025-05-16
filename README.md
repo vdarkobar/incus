@@ -27,7 +27,7 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
   
 <br/>
   
-Create ZFS Pool and Incus Dataset, example:  
+(*example*) Create ZFS Pool and Incus Dataset:  
 ```bash
 sudo zpool create -f \
   -o ashift=12 \
