@@ -157,7 +157,7 @@ sudo update-grub && sudo reboot now
 
 <br/>
 
-Add the docker repository
+Add the Docker repository:
 ```bash
 incus remote add docker https://docker.io --protocol=oci
 ```
