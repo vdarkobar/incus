@@ -53,7 +53,7 @@ sudo zpool add -f local cache /dev/disk/by-id/xxx4
 sudo zpool add -f local spare /dev/disk/by-id/xxx5
 ```
 ```bash
-sudo zfs create local/incus -o mountpoint=/mnt/incus
+sudo zfs create local/incus
 ```  
 <br/>
 Initialize Incus (*Point Incus to ZFS Dataset during init phase*)
