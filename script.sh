@@ -4,6 +4,29 @@
 # ZFS 
 # ------------------------------------------------------------------------------
 
+# Check if lsb-release package is installed, if not install it without prompting
+if ! dpkg -l | grep -q lsb-release; then
+    echo "Installing lsb-release package..."
+    apt-get update -qq > /dev/null
+    apt-get install -y lsb-release -qq > /dev/null
+    
+    # Verify installation was successful
+    if ! dpkg -l | grep -q lsb-release; then
+        echo "Error: Failed to install lsb-release package."
+        exit 1
+    fi
+fi
+
+# Try to get Debian version with error handling
+debian_version=$(lsb_release -cs 2>/dev/null)
+
+# Check if the command succeeded and if we got a value
+if [ $? -ne 0 ] || [ -z "$debian_version" ]; then
+    echo "Error: Failed to determine Debian version."
+    echo "This might not be a Debian-based system or lsb_release is not working properly."
+    exit 1
+fi
+
 # First, check your Debian version
 debian_version=$(lsb_release -cs)
 
@@ -136,7 +159,7 @@ sudo systemctl enable libvirtd
 # ------------------------------------------------------------------------------
 
 # Prerequisites 
-sudo apt install -y gnupg2 wget
+sudo apt install -y ca-certificates gnupg2 wget
 
 # Create a folder to store the Incus keys:
 sudo mkdir -p /etc/apt/keyrings/
