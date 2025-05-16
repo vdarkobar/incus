@@ -58,7 +58,7 @@ sudo zfs create local/incus
 
 <br/>
 
-Initialize Incus (**point Incus to ZFS Dataset during init phase**)
+Initialize Incus (point Incus to ZFS Dataset during init phase - **no, to create ZFS pool**)
 ```bash
 incus admin init
 ```  
