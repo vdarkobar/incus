@@ -161,4 +161,19 @@ GRUB_CMDLINE_LINUX=""
 ```bash
 sudo update-grub && sudo reboot now
 ```
+  
+Add the docker repository
+```bash
+incus remote add docker https://docker.io --protocol=oci
+```
+example:
+```bash
+incus create docker:nginx:latest web
+```
+Upgrade:
+```bash
+incus stop web
+incus rebuild docker:nginx:latest web
+incus start web
+```
 
