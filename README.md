@@ -1,35 +1,4 @@
 ## Incus installer script, Debian  
-  
-Create ZFS Pool and Incus Dataset, example:  
-```bash
-sudo zpool create -f \
-  -o ashift=12 \
-  -o autoexpand=on \
-  -O atime=off \
-  -O compression=lz4 \
-  local \
-  raidz \
-  /dev/disk/by-id/xxx1 \
-  /dev/disk/by-id/xxx2 \
-  /dev/disk/by-id/xxx3
-# or:
-  local \
-  mirror \
-    /dev/disk/by-id/xxx1 \
-    /dev/disk/by-id/xxx2 \
-  mirror \
-    /dev/disk/by-id/xxx3 \
-    /dev/disk/by-id/xxx4 
-```
-```bash
-sudo zpool add -f local cache /dev/disk/by-id/xxx4
-sudo zpool add -f local spare /dev/disk/by-id/xxx5
-```
-```bash
-sudo zfs create local/incus -o mountpoint=/mnt/incus
-```  
-
-Point Incus to ZFS Dataset during init phase  
 
 <br/>
 
@@ -61,11 +30,40 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
   
 <br/>
   
-Initialize Incus
+Create ZFS Pool and Incus Dataset, example:  
+```bash
+sudo zpool create -f \
+  -o ashift=12 \
+  -o autoexpand=on \
+  -O atime=off \
+  -O compression=lz4 \
+  local \
+  raidz \
+  /dev/disk/by-id/xxx1 \
+  /dev/disk/by-id/xxx2 \
+  /dev/disk/by-id/xxx3
+# or:
+  local \
+  mirror \
+    /dev/disk/by-id/xxx1 \
+    /dev/disk/by-id/xxx2 \
+  mirror \
+    /dev/disk/by-id/xxx3 \
+    /dev/disk/by-id/xxx4 
+```
+```bash
+sudo zpool add -f local cache /dev/disk/by-id/xxx4
+sudo zpool add -f local spare /dev/disk/by-id/xxx5
+```
+```bash
+sudo zfs create local/incus -o mountpoint=/mnt/incus
+```  
+<br/>
+Initialize Incus (*Point Incus to ZFS Dataset during init phase*)
 ```bash
 incus admin init
 ```  
-
+<br/>
 Create **bridge interface** on the host machine (two network ports, first for host, second for the bridge, instance gets IP from the physical network, not internal subnet) 
 ```bash
 sudo nano /etc/network/interfaces
