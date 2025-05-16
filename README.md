@@ -70,7 +70,7 @@ Create **bridge interface** on the host machine (*instance gets IP from the phys
 sudo nano /etc/network/interfaces
 ```
 
-Replace or add the following configuration (edit port names):
+Replace or add the following configuration (*edit port names*):
 ```bash
 # This file describes the network interfaces available on your system
 # and how to activate them. For more information, see interfaces(5).
