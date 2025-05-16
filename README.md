@@ -65,7 +65,7 @@ incus admin init
 
 <br/>
 
-Create **bridge interface** on the host machine (*instance gets IP from the physical network, not internal subnet*) 
+Create **bridge interface** on the ***host*** machine (*instance gets IP from the physical network, not internal subnet*) 
 ```bash
 sudo nano /etc/network/interfaces
 ```
