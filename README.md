@@ -104,7 +104,7 @@ Check the current profile configuration:
 incus profile show default
 ```
 
-remove the conflicting eth0 configuration
+Remove the conflicting eth0 configuration:
 ```bash
 incus profile device remove default eth0
 ```
@@ -160,7 +160,9 @@ GRUB_CMDLINE_LINUX=""
 ```bash
 sudo update-grub && sudo reboot now
 ```
-  
+
+<br/>
+
 Add the docker repository
 ```bash
 incus remote add docker https://docker.io --protocol=oci
