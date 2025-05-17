@@ -32,6 +32,7 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 sudo zpool create -f \
   -o ashift=12 \
   -o autoexpand=on \
+  -o autotrim=on \            # SSD
   -O atime=off \
   -O compression=lz4 \
   local \
