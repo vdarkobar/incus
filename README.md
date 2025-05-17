@@ -4,14 +4,17 @@ Installer script, Debian 12 <a href="https://github.com/vdarkobar/incus/blob/mai
   
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script1.sh)"
-```  
+```
+
 <br/>  
+
 Backup/Restore  
 *Script stores each backup as a timestamped tarball under the chosen ZFS dataset’s incus-backups/ directory (at its mountpoint), and creates a matching ZFS snapshot for easy rollback.*
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script2.sh)"
 ```
 
+<br/>  
 
 (*example*) Create ZFS Pool and Incus Dataset:  
 ```bash
