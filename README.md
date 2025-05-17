@@ -1,7 +1,17 @@
-## Incus installer script, Debian  
+## Incus 
+
+### Installer script, Debian 12
   
 ```bash
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script.sh)"
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script1.sh)"
+```
+
+<br/>
+
+### Incus Server Backup/Restore
+  
+```bash
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script1.sh)"
 ```
 
 <br/>
