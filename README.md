@@ -112,7 +112,7 @@ Remove the conflicting eth0 configuration:
 incus profile device remove default eth0
 ```
 
-Add the new bridged network configuration <a https://github.com/vdarkobar/incus/blob/main/misc/bridged-network.md"> * </a* :
+Add the new bridged network configuration <a https://github.com/vdarkobar/incus/blob/main/misc/bridged-network.md"> * </a> :
 ```bash
 incus profile device add default eth0 nic nictype=bridged parent=br0 name=eth0
 ```  
