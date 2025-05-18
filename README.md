@@ -12,7 +12,7 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script2.sh)"
 ```
 
-#### Container/VM hardening  
+#### Container hardening  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script3.sh)"
 ```
