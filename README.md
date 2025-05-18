@@ -1,18 +1,19 @@
 ## Incus 
 
-#### Installer script, Debian <a href="https://github.com/vdarkobar/incus/blob/main/misc/installer.md"> * </a>
-  
+#### Installer script, Debian <a href="https://github.com/vdarkobar/incus/blob/main/misc/installer.md"> * </a>  
+*Installs ZFS, KVM and Incus*  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script1.sh)"
 ```  
 
 #### Backup/Restore  
-*Script stores each backup as a timestamped tarball under the chosen ZFS dataset’s incus-backups/ directory (at its mountpoint), and creates a matching ZFS snapshot for easy rollback.*
+*Script stores each backup as a timestamped tarball under the chosen ZFS dataset’s incus-backups/ directory (at its mountpoint), and creates a matching ZFS snapshot for easy rollback.*  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script2.sh)"
 ```
 
 #### Container hardening  
+*Create Container, run script on the host*  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script3.sh)"
 ```
