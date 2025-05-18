@@ -1,6 +1,6 @@
 ## Incus 
 
-#### Installer script, Debian 12 <a href="https://github.com/vdarkobar/incus/blob/main/misc/installer.md"> * </a>
+#### Installer script, Debian <a href="https://github.com/vdarkobar/incus/blob/main/misc/installer.md"> * </a>
   
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script1.sh)"
