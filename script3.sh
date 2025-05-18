@@ -5,6 +5,8 @@
 # Creates a non-root user and configures locale #
 #################################################
 
+# Colors removed as requested
+
 # Welcome banner
 echo "====================================="
 echo "Incus Container Configuration Script"
@@ -78,7 +80,7 @@ done
 #######################################
 
 echo
-echo -n "[INFO] Would you like to add an SSH public key for user '$username' (recomended)? (y/n): "
+echo -n "[INFO] Would you like to add an SSH public key for user '$username'? (recommended for security) (y/n): "
 read -r setup_ssh
 
 ssh_key_added=false
@@ -148,11 +150,11 @@ if ! apt install -y \
     fail2ban \
     lsb-release \
     gnupg-agent \
-    libpam-tmpdir \
     openssh-server \
-    python3-systemd \
+    libpam-tmpdir \
     bash-completion \
     ca-certificates \
+    python3-systemd \
     unattended-upgrades; then
     echo '[ERROR] Failed to install packages. Exiting.'
     exit 1
@@ -394,6 +396,49 @@ sysctl net.ipv4.conf.default.rp_filter net.ipv4.conf.all.rp_filter
 "
 
 echo "[INFO] System variables configured successfully."
+
+##################
+# Setting up UFW #
+##################
+echo
+echo "[INFO] Setting up UFW..."
+
+# Configure UFW inside the container
+incus exec "$CONTAINER_NAME" -- bash -c "
+# Check if UFW is installed
+if ! command -v ufw >/dev/null 2>&1; then
+    echo '[ERROR] UFW is not installed. Please check the package installation. Exiting.'
+    exit 1
+fi
+
+# Limit SSH to Port 22/tcp
+if ! ufw limit 22/tcp comment 'SSH'; then
+    echo '[ERROR] Failed to limit SSH access. Exiting.'
+    exit 1
+fi
+
+# Set global rules
+if ! ufw default deny incoming || ! ufw default allow outgoing; then
+    echo '[ERROR] Failed to set global rules. Exiting.'
+    exit 1
+fi
+
+# Enable UFW without prompt
+if ! ufw --force enable; then
+    echo '[ERROR] Failed to enable UFW. Exiting.'
+    exit 1
+fi
+
+# Reload UFW to apply changes
+if ! ufw reload; then
+    echo '[ERROR] Failed to reload UFW. Exiting.'
+    exit 1
+fi
+
+echo '[INFO] UFW setup completed.'
+"
+
+echo "[INFO] UFW firewall configured successfully."
 
 ####################################
 # Setting up SSH security          #
