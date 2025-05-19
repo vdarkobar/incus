@@ -18,6 +18,12 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script3.sh)"
 ```
 
+#### VM hardening  
+*Create Container, run script ?????????*  
+```bash
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)"
+```
+
 <br/>  
 
 (*example*) Create ZFS Pool and Incus Dataset:  
