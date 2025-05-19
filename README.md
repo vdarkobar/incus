@@ -19,9 +19,13 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 ```
 
 #### VM hardening  
-*Create VM, run script ?????????*  
+*Create VM, new bash shell*
 ```bash
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)"
+incus exec <vm-name> -- bash
+```
+run command
+```bash
+apt install wget -y && bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)""
 ```
 
 <br/>  
