@@ -19,7 +19,7 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 ```
 
 #### VM hardening  
-*Create VM, new bash shell*
+*Create VM, execute new bash shell*
 ```bash
 incus exec <vm-name> -- bash
 ```
