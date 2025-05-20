@@ -10,13 +10,15 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 *Script stores each backup as a timestamped tarball under the chosen ZFS dataset’s incus-backups/ directory (at its mountpoint), and creates a matching ZFS snapshot for easy rollback.*  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script2.sh)"
-```
+```  
+
+<br/>  
 
 #### Container hardening  
 *Create Container, run script on the host*  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script3.sh)"
-```
+```  
 
 #### VM hardening  
 *Create VM, run script on the host*  
@@ -25,10 +27,9 @@ incus list type=virtual-machine && echo
 read -p "Enter the VM name: " vm_name
 incus exec "$vm_name" -- bash -c "apt install -y wget && echo \
 $(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)"
-```
+```  
 
 <br/>  
-
 
 #### ZFS Pool Creation Helper Script  
 *Run script on the host*  
