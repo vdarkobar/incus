@@ -25,7 +25,7 @@ incus exec <vm-name> -- bash
 ```
 run command
 ```bash
-apt install wget -y && bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)""
+apt install wget -y && bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)"
 ```
 
 <br/>  
