@@ -19,9 +19,12 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/sc
 ```
 
 #### VM hardening  
-*Create VM, execute new bash shell `incus exec <vm-name> -- bash`, run the command*  
+*Create VM, run script on the host*  
 ```bash
-apt install wget -y && bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)"
+incus list type=virtual-machine && echo
+read -p "Enter the VM name: " vm_name
+incus exec "$vm_name" -- bash -c "apt install -y wget && echo \
+$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)"
 ```
 
 <br/>  
