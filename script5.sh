@@ -335,7 +335,19 @@ create_zfs_pool() {
         if [[ $compression_choice =~ ^[Yy]$ ]]; then
             options="$options -O compression=lz4"
         fi
-        
+
+        print_msg "$YELLOW" "Enable autotrim? (y/n)"
+        read -r autotrim_choice
+        if [[ $autotrim_choice =~ ^[Yy]$ ]]; then
+            options="$options -o autotrim=on"
+        fi
+
+        print_msg "$YELLOW" "Enable autoexpand? (y/n)"
+        read -r autoexpand_choice
+        if [[ $autoexpand_choice =~ ^[Yy]$ ]]; then
+            options="$options -o autoexpand=on"
+        fi
+
         print_msg "$YELLOW" "Enable atime? (y/n, 'n' is recommended for better performance)"
         read -r atime_choice
         if [[ ! $atime_choice =~ ^[Yy]$ ]]; then
