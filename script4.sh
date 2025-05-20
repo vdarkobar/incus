@@ -1,533 +1,225 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Debian 13 (Trixie) VM Security Setup Script
+# Rewritten for idempotency, error handling, and non-interactive automation
 
-#################################################
-# Debian 13 (Trixie) VM Security Setup Script   #
-# Creates a non-root user and hardens security  #
-#################################################
+set -euo pipefail
+IFS=$'\n\t'
 
-# Welcome banner
-echo "====================================="
-echo "Debian 13 VM Security Setup Script"
-echo "====================================="
-echo
+# Ensure script is run as root
+if [[ $EUID -ne 0 ]]; then
+    echo "[ERROR] This script must be run as root." >&2
+    exit 1
+fi
 
-#######################################
-# Gathering non-root user information #
-#######################################
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
 
+log_info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+# Prompt for non-root username
 while true; do
-    echo
-    echo -n "[INFO] Enter username for a non-root user: "
-    read -r username
-    if [ "$username" == "root" ]; then
-        echo "[ERROR] Username 'root' is not allowed."
-    elif [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-        # Check if user already exists
-        if id "$username" &>/dev/null; then
-            echo "[ERROR] User '$username' already exists."
-        else
-            echo "[INFO] Selected Username: $username"
-            break
-        fi
+    read -rp "Enter username for new sudo user: " USERNAME
+    if [[ -z "$USERNAME" ]]; then
+        log_error "Username cannot be empty."
+    elif [[ "$USERNAME" =~ ^root$ ]]; then
+        log_error "Username 'root' is reserved."
+    elif ! [[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        log_error "Invalid username. Use lowercase letters, digits, dashes, or underscores."
+    elif id "$USERNAME" &>/dev/null; then
+        log_error "User '$USERNAME' already exists."
     else
-        echo "[ERROR] Invalid username. Use lowercase letters, digits, dashes, or underscores."
-    fi
-done
-
-while true; do
-    echo
-    echo -n "[INFO] Enter password for user '$username': "
-    read -s password
-    echo
-    echo -n "[INFO] Re-enter password for verification: "
-    read -s password2
-    echo
-    if [ "$password" != "$password2" ]; then
-        echo "[ERROR] Passwords do not match. Please try again."
-    elif [ ${#password} -lt 8 ]; then
-        echo "[ERROR] Password must be at least 8 characters long."
-    elif ! [[ "$password" =~ [0-9] ]] || ! [[ "$password" =~ [^a-zA-Z0-9] ]]; then
-        echo "[ERROR] Password must contain at least one number and one special character."
-    else
-        echo "[INFO] Password set successfully."
+        log_info "Selected username: $USERNAME"
         break
     fi
 done
 
-#######################################
-# Ask for SSH key (optional)          #
-#######################################
+# Prompt for password
+while true; do
+    read -rsp "Enter password for '$USERNAME': " PASS1; echo
+    read -rsp "Confirm password: " PASS2; echo
+    if [[ "$PASS1" != "$PASS2" ]]; then
+        log_error "Passwords do not match."
+    elif (( ${#PASS1} < 8 )); then
+        log_error "Password must be at least 8 characters."
+    elif ! [[ "$PASS1" =~ [0-9] ]] || ! [[ "$PASS1" =~ [^a-zA-Z0-9] ]]; then
+        log_error "Password must include at least one number and one special character."
+    else
+        log_info "Password validated."
+        break
+    fi
+done
 
-echo
-echo -n "[INFO] Would you like to add an SSH public key for user '$username'? (y/n): "
-read -r setup_ssh
+# Optional: Configure locale
+read -rp "Configure locale to en_US.UTF-8? (y/N): " LOCALE_CHOICE
+LOCALE_CHOICE=${LOCALE_CHOICE:-N}
 
-ssh_key_added=false
-if [[ "$setup_ssh" =~ ^[Yy]$ ]]; then
-    # Ask for public key
+# Optional: SSH public key
+read -rp "Add SSH public key for '$USERNAME'? (y/N): " SSH_CHOICE
+SSH_CHOICE=${SSH_CHOICE:-N}
+if [[ "$SSH_CHOICE" =~ ^[Yy]$ ]]; then
     while true; do
-        echo
-        echo -n "[INFO] Please enter your public SSH key: "
-        read -r public_key
-
-        # Check if the input was empty
-        if [ -z "$public_key" ]; then
-            echo "[ERROR] No input received, please enter a public key."
+        read -rp "Paste SSH public key: " PUBKEY
+        if [[ -z "$PUBKEY" ]]; then
+            log_error "SSH key cannot be empty."
+        elif [[ "$PUBKEY" =~ ^ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]+={0,3}([[:space:]]+.+)?$ ]]; then
+            log_info "SSH key format OK."
+            break
         else
-            # Validate the public key format
-            if [[ "$public_key" =~ ^ssh-(rsa|dss|ecdsa|ed25519)[[:space:]][A-Za-z0-9+/]+[=]{0,2} ]]; then
-                ssh_key_added=true
-                break
-            else
-                echo "[ERROR] Invalid SSH key format. Please enter a valid SSH public key."
-            fi
+            log_error "Invalid SSH key format."
         fi
     done
-    echo "[INFO] SSH public key will be added during configuration."
-else
-    echo "[INFO] Skipping SSH public key setup."
 fi
 
-#######################################
-# Configure locale (optional)         #
-#######################################
+# Set non-interactive frontend
+export DEBIAN_FRONTEND=noninteractive
 
-echo
-echo -n "[INFO] Configure system locale? (y/n): "
-read -r configure_locale
+# Update and install packages
+log_info "Updating package lists..."
+apt-get update -y
 
-#######################################
-# System Configuration                #
-#######################################
+REQUIRED=(sudo ufw wget curl nano gnupg2 argon2 fail2ban python3-systemd \
+           lsb-release gnupg-agent libpam-tmpdir bash-completion \
+           ca-certificates openssh-server unattended-upgrades)
 
-# First check if we're running as root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "[ERROR] This script must be run as root."
-    echo "[INFO] Please run with: sudo $0"
-    exit 1
-fi
-
-# Update package lists and install required packages
-echo
-echo "[INFO] Updating package lists and installing required packages..."
-
-# Update the package repositories
-if ! apt update; then
-    echo '[ERROR] Failed to update package repositories. Exiting.'
-    exit 1
-fi
-
-# Install required packages
-echo "[INFO] Installing required packages..."
-if ! apt install -y \
-    sudo \
-    ufw \
-    wget \
-    curl \
-    nano \
-    gnupg2 \
-    argon2 \
-    fail2ban \
-    python3-systemd \
-    lsb-release \
-    gnupg-agent \
-    libpam-tmpdir \
-    bash-completion \
-    ca-certificates \
-    openssh-server \
-    unattended-upgrades; then
-    echo '[ERROR] Failed to install packages. Exiting.'
-    exit 1
-fi
+log_info "Installing packages: ${REQUIRED[*]}"
+apt-get install -y "${REQUIRED[@]}"
 
 # Configure locale if requested
-if [[ "$configure_locale" =~ ^[Yy]$ ]]; then
-    echo "[INFO] Configuring locale settings..."
-    echo 'LANG=en_US.UTF-8' >> /etc/environment
-    echo 'LC_ALL=en_US.UTF-8' >> /etc/environment
-    echo "[INFO] Locale configuration completed successfully."
+if [[ "$LOCALE_CHOICE" =~ ^[Yy]$ ]]; then
+    log_info "Configuring locale..."
+    grep -qxF 'LANG=en_US.UTF-8' /etc/environment || echo 'LANG=en_US.UTF-8' >> /etc/environment
+    grep -qxF 'LC_ALL=en_US.UTF-8' /etc/environment || echo 'LC_ALL=en_US.UTF-8' >> /etc/environment
 fi
 
-######################
-# Prepare hosts file #
-######################
-
-echo
-echo "[INFO] Configuring hosts file..."
-
-# Get the system hostname
+# Prepare hosts file idempotently
 HOSTNAME=$(hostname)
-IP_ADDRESS=$(hostname -I | awk '{print $1}')
+IP_ADDR=$(hostname -I | awk '{print $1}')
 
-# Get the domain name from /etc/resolv.conf
-DOMAIN_LOCAL=$(awk -F' ' '/^domain/ {print $2; exit}' /etc/resolv.conf)
-if [[ -z "$DOMAIN_LOCAL" ]]; then
-    # Try using sed
-    DOMAIN_LOCAL=$(sed -n 's/^domain //p' /etc/resolv.conf)
-    if [[ -z "$DOMAIN_LOCAL" ]]; then
-        # Backup: Check the 'search' line
-        DOMAIN_LOCAL=$(awk -F' ' '/^search/ {print $2; exit}' /etc/resolv.conf)
-        if [[ -z "$DOMAIN_LOCAL" ]]; then
-            DOMAIN_LOCAL=$(sed -n 's/^search //p' /etc/resolv.conf)
-            if [[ -z "$DOMAIN_LOCAL" ]]; then
-                echo "[ERROR] Domain name not found using available methods."
-                echo "[INFO] Using 'local' as fallback domain."
-                DOMAIN_LOCAL="local"
+# Determine domain name from /etc/resolv.conf
+DOMAIN=$(awk -F' ' '/^domain/ {print $2; exit}' /etc/resolv.conf || true)
+if [[ -z "$DOMAIN" ]]; then
+    DOMAIN=$(sed -n 's/^domain //p' /etc/resolv.conf || true)
+    if [[ -z "$DOMAIN" ]]; then
+        DOMAIN=$(awk -F' ' '/^search/ {print $2; exit}' /etc/resolv.conf || true)
+        if [[ -z "$DOMAIN" ]]; then
+            DOMAIN=$(sed -n 's/^search //p' /etc/resolv.conf || true)
+            if [[ -z "$DOMAIN" ]]; then
+                log_error "Domain name not found; using 'local' fallback."
+                DOMAIN="local"
             fi
         fi
     fi
 fi
 
-echo "[INFO] Using domain: $DOMAIN_LOCAL"
+NEW_LINE="$IP_ADDR $HOSTNAME $HOSTNAME.$DOMAIN"
+log_info "Updating /etc/hosts: $NEW_LINE"
+# Backup and rebuild hosts
+cp /etc/hosts /etc/hosts.bak.$(date +%F)
+awk -v line="$NEW_LINE" -v host="$HOSTNAME" \
+    '!($0 ~ host) {print} END{print line}' /etc/hosts.bak.$(date +%F) > /etc/hosts
 
-# Construct the new line for /etc/hosts
-new_line="$IP_ADDRESS $HOSTNAME $HOSTNAME.$DOMAIN_LOCAL"
-
-echo "[INFO] Updating hosts file with: $new_line"
-
-# Update hosts file
-{
-    echo "$new_line"
-    echo "============================================"
-    # Replace the line containing the hostname with the new line
-    awk -v hostname="$HOSTNAME" -v new_line="$new_line" '!($0 ~ hostname) || $0 == new_line' /etc/hosts
-} > /tmp/hosts.tmp
-
-# Move the temporary file to /etc/hosts
-mv /tmp/hosts.tmp /etc/hosts
-
-echo "[INFO] Hosts file has been updated."
-
-############################################
-# Automatically enable unattended-upgrades #
-############################################
-echo
-echo "[INFO] Configuring unattended-upgrades..."
-
-# Enable unattended-upgrades
-if echo unattended-upgrades unattended-upgrades/enable_auto_updates boolean true | debconf-set-selections && dpkg-reconfigure -f noninteractive unattended-upgrades; then
-    echo '[INFO] Unattended-upgrades enabled successfully.'
-else
-    echo '[ERROR] Failed to enable unattended-upgrades. Exiting.'
-    exit 1
-fi
-
-# Define the file path
-FILEPATH='/etc/apt/apt.conf.d/50unattended-upgrades'
-
-# Check if the file exists before attempting to modify it
-if [ ! -f "$FILEPATH" ]; then
-    echo '[ERROR] $FILEPATH does not exist. Exiting.'
-    exit 1
-fi
-
-# Uncomment the necessary lines
-if sed -i 's|//Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";|Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";|g' $FILEPATH \
-   && sed -i 's|//Unattended-Upgrade::Remove-New-Unused-Dependencies "true";|Unattended-Upgrade::Remove-New-Unused-Dependencies "true";|g' $FILEPATH \
-   && sed -i 's|//Unattended-Upgrade::Remove-Unused-Dependencies "false";|Unattended-Upgrade::Remove-Unused-Dependencies "true";|g' $FILEPATH \
-   && sed -i 's|//Unattended-Upgrade::Automatic-Reboot "false";|Unattended-Upgrade::Automatic-Reboot "true";|g' $FILEPATH \
-   && sed -i 's|//Unattended-Upgrade::Automatic-Reboot-Time "02:00";|Unattended-Upgrade::Automatic-Reboot-Time "02:00";|g' $FILEPATH; then
-    echo '[INFO] unattended-upgrades configuration updated successfully.'
-else
-    echo '[ERROR] Failed to update configuration. Please check your permissions and file paths. Exiting.'
-    exit 1
-fi
-
-#######################
-# Setting up Fail2Ban #
-#######################
-echo
-echo "[INFO] Setting up Fail2Ban..."
-
-# Check if Fail2Ban is installed
-if ! command -v fail2ban-server >/dev/null 2>&1; then
-    echo '[ERROR] Fail2Ban is not installed. Please check the package installation. Exiting.'
-    exit 1
-fi
-
-# Create jail.local if it doesn't exist
-if [ ! -f '/etc/fail2ban/jail.local' ]; then
-    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-fi
-
-# Fixing Debian bug by setting backend to systemd
-if ! sed -i 's|backend = auto|backend = systemd|g' /etc/fail2ban/jail.local; then
-    echo '[ERROR] Failed to set backend to systemd in jail.local. Exiting.'
-    exit 1
-fi
-
-# Create paths-debian.conf or append to it
-echo '[INFO] Ensuring systemd backend is configured for Fail2Ban...'
-if [ -f '/etc/fail2ban/paths-debian.conf' ]; then
-    # If file exists but doesn't have sshd_backend entry, add it
-    if ! grep -q 'sshd_backend' '/etc/fail2ban/paths-debian.conf'; then
-        echo 'sshd_backend = systemd' >> /etc/fail2ban/paths-debian.conf
-    fi
-else
-    # Create the file if it doesn't exist
-    echo 'sshd_backend = systemd' > /etc/fail2ban/paths-debian.conf
-fi
-
-echo '[INFO] Configuring Fail2Ban for SSH protection...'
-
-# Set the path to the sshd configuration file
-config_file='/etc/fail2ban/jail.local'
-
-# Use awk to add "enabled = true" below the second [sshd] line (first is a comment)
-if ! awk '/\[sshd\]/ && ++n == 2 {print; print "enabled = true"; next}1' "$config_file" > temp_file || ! mv temp_file "$config_file"; then
-    echo '[ERROR] Failed to enable SSH protection. Exiting.'
-    exit 1
-fi
-
-# Change bantime to 15m
-if ! sed -i 's|bantime  = 10m|bantime  = 15m|g' /etc/fail2ban/jail.local; then
-    echo '[ERROR] Failed to set bantime to 15m. Exiting.'
-    exit 1
-fi
-
-# Change maxretry to 3
-if ! sed -i 's|maxretry = 5|maxretry = 3|g' /etc/fail2ban/jail.local; then
-    echo '[ERROR] Failed to set maxretry to 3. Exiting.'
-    exit 1
-fi
-
-# Apply Fail2Ban configuration
-systemctl restart fail2ban
-systemctl enable fail2ban
-
-echo '[INFO] Fail2Ban setup completed.'
-
-##########################
-# Securing Shared Memory #
-##########################
-echo '[INFO] Securing Shared Memory...'
-
-# Define the line to append
-LINE="none /run/shm tmpfs defaults,ro 0 0"
-
-# Check if the line already exists
-if ! grep -q "^none /run/shm" /etc/fstab; then
-    # Append the line to the end of the file
-    if ! echo "$LINE" >> /etc/fstab; then
-        echo '[ERROR] Failed to secure shared memory. Exiting.'
-        exit 1
-    fi
-    echo '[INFO] Shared memory secured successfully.'
-else
-    echo '[INFO] Shared memory is already secured.'
-fi
-
-###############################
-# Setting up system variables #
-###############################
-echo
-echo "[INFO] Setting up system variables..."
-
-# Create a new sysctl configuration file
-mkdir -p /etc/sysctl.d/
-cat > /etc/sysctl.d/99-security-hardening.conf << 'EOF'
-# IP Spoofing protection
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
-
-# Block SYN attacks
-net.ipv4.tcp_syncookies = 1
-
-# Controls IP packet forwarding
-net.ipv4.ip_forward = 0
-net.ipv6.conf.all.forwarding = 0
-
-# Ignore ICMP redirects
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv6.conf.all.accept_redirects = 0
-
-# Ignore send redirects
-net.ipv4.conf.all.send_redirects = 0
-
-# Disable source packet routing
-net.ipv4.conf.all.accept_source_route = 0
-net.ipv6.conf.all.accept_source_route = 0
-
-# Log Martians
-net.ipv4.conf.all.log_martians = 1
+# Enable unattended-upgrades non-interactively
+log_info "Enabling unattended-upgrades..."
+cat >/etc/apt/apt.conf.d/20auto-upgrades <<EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
 EOF
 
-# Apply the new settings
-if ! systemctl restart systemd-sysctl.service; then
-    echo '[ERROR] Failed to reload sysctl configuration. Exiting.'
-    exit 1
-fi
+# Uncomment desired options in 50unattended-upgrades
+cfg=/etc/apt/apt.conf.d/50unattended-upgrades
+cp "$cfg" "$cfg.bak.$(date +%F)"
+sed -ri \
+    -e 's|^//Unattended-Upgrade::Remove-Unused-Kernel-Packages|Unattended-Upgrade::Remove-Unused-Kernel-Packages|' \
+    -e 's|^//Unattended-Upgrade::Remove-New-Unused-Dependencies|Unattended-Upgrade::Remove-New-Unused-Dependencies|' \
+    -e 's|^//Unattended-Upgrade::Remove-Unused-Dependencies|Unattended-Upgrade::Remove-Unused-Dependencies|' \
+    -e 's|^//Unattended-Upgrade::Automatic-Reboot |Unattended-Upgrade::Automatic-Reboot |' \
+    -e 's|^//Unattended-Upgrade::Automatic-Reboot-Time|Unattended-Upgrade::Automatic-Reboot-Time|' \
+    "$cfg"
 
-# Verify settings were applied
-echo '[INFO] Verifying sysctl settings...'
-sysctl net.ipv4.conf.default.rp_filter net.ipv4.conf.all.rp_filter
+# Configure Fail2Ban
+log_info "Configuring Fail2Ban..."
+cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+sed -ri 's|backend = auto|backend = systemd|' /etc/fail2ban/jail.local
+# Ensure sshd jail is enabled
+grep -q "\[sshd\]" /etc/fail2ban/jail.local && \
+    sed -i '/\[sshd\]/,/^$/ s|#?enabled *= *no|enabled = true|' /etc/fail2ban/jail.local
+systemctl enable --now fail2ban
 
-echo "[INFO] System variables configured successfully."
+# Secure shared memory
+fstab=/etc/fstab
+LINE="none /run/shm tmpfs defaults,ro 0 0"
+grep -qxF "$LINE" "$fstab" || echo "$LINE" >> "$fstab"
 
-####################################
-# Setting up SSH security          #
-####################################
-echo
-echo "[INFO] Configuring SSH security..."
+# Sysctl hardening via sysctl.d
+log_info "Applying sysctl settings..."
+cat >/etc/sysctl.d/99-security-hardening.conf <<EOF
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter     = 1
+net.ipv4.tcp_syncookies        = 1
+net.ipv4.ip_forward            = 0
+net.ipv6.conf.all.forwarding   = 0
+net.ipv4.conf.all.accept_redirects = 0
+net-ipv6.conf.all.accept_redirects = 0
+net-ipv4.conf.all.accept-source-route = 0
+net-ipv6.conf.all.accept-source-route = 0
+net.ipv4.conf.all.log_martians = 1
+EOF
+sysctl --system
 
-# Define the file path
-FILEPATH='/etc/ssh/sshd_config'
-
-# Check if SSH config exists
-if [ ! -f "$FILEPATH" ]; then
-    echo '[ERROR] SSH configuration file not found. Exiting.'
-    exit 1
-fi
-
-echo '[INFO] Setting up SSH variables...'
-
-# Applying multiple sed operations to configure SSH securely
-if ! (sed -i 's|KbdInteractiveAuthentication no|#KbdInteractiveAuthentication no|g' $FILEPATH \
-    && sed -i 's|#LogLevel INFO|LogLevel VERBOSE|g' $FILEPATH \
-    && sed -i 's|#PermitRootLogin prohibit-password|PermitRootLogin no|g' $FILEPATH \
-    && sed -i 's|#StrictModes yes|StrictModes yes|g' $FILEPATH \
-    && sed -i 's|#MaxAuthTries 6|MaxAuthTries 3|g' $FILEPATH \
-    && sed -i 's|#MaxSessions 10|MaxSessions 2|g' $FILEPATH \
-    && sed -i 's|#IgnoreRhosts yes|IgnoreRhosts yes|g' $FILEPATH \
-    && sed -i 's|#PermitEmptyPasswords no|PermitEmptyPasswords no|g' $FILEPATH \
-    && sed -i 's|#GSSAPIAuthentication no|GSSAPIAuthentication no|g' $FILEPATH \
-    && sed -i '/# Ciphers and keying/a Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' $FILEPATH \
-    && sed -i '/chacha20-poly1305/a KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256' $FILEPATH \
-    && sed -i '/curve25519-sha256/a Protocol 2' $FILEPATH); then
-    echo '[ERROR] Failed to configure SSH variables. Exiting.'
-    exit 1
-fi
-
-# Only disable password authentication if SSH key was added
-if [ "$ssh_key_added" = "true" ]; then
-    echo '[INFO] Disabling password authentication (SSH key provided)...'
-    if ! sed -i 's|#PasswordAuthentication yes|PasswordAuthentication no|g' $FILEPATH; then
-        echo '[WARNING] Failed to disable password authentication.'
+# SSH hardening
+SSHD_CFG=/etc/ssh/sshd_config
+cp "$SSHD_CFG" "$SSHD_CFG.bak.$(date +%F)"
+apply_or_append() {
+    local pattern="$1" replacement="$2"
+    if grep -qE "^$pattern" "$SSHD_CFG"; then
+        sed -ri "s|^$pattern.*|$replacement|" "$SSHD_CFG"
+    else
+        echo "$replacement" >> "$SSHD_CFG"
     fi
-    
-    if ! sed -i 's|UsePAM yes|UsePAM no|g' $FILEPATH; then
-        echo '[WARNING] Failed to disable PAM authentication.'
-    fi
-else
-    echo '[INFO] Keeping password authentication enabled (no SSH key provided)...'
-    # Ensure password authentication is explicitly enabled
-    if ! sed -i 's|#PasswordAuthentication yes|PasswordAuthentication yes|g' $FILEPATH; then
-        echo '[WARNING] Failed to explicitly enable password authentication.'
-    fi
-fi
+}
+log_info "Hardening SSH configuration..."
+apply_or_append "^Protocol"           "Protocol 2"
+apply_or_append "^LogLevel"           "LogLevel VERBOSE"
+apply_or_append "^PermitRootLogin"    "PermitRootLogin no"
+apply_or_append "^PasswordAuthentication" "PasswordAuthentication no"
+apply_or_append "^ChallengeResponseAuthentication" "ChallengeResponseAuthentication no"
+apply_or_append "^MaxAuthTries"       "MaxAuthTries 3"
+apply_or_append "^MaxSessions"        "MaxSessions 2"
+apply_or_append "^IgnoreRhosts"       "IgnoreRhosts yes"
+apply_or_append "^StrictModes"        "StrictModes yes"
+apply_or_append "^Ciphers"            "Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+apply_or_append "^KexAlgorithms"      "KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256"
+apply_or_append "^AllowUsers"         "AllowUsers $USERNAME"
+sshd -t
+# Enable SSH service (handles both ssh and sshd unit names)
+systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd 2>/dev/null
 
-echo '[INFO] Disabling ChallengeResponseAuthentication...'
-
-# Define the line to append
-LINE='ChallengeResponseAuthentication no'
-
-# Check if the line already exists to avoid duplications
-if grep -q "^$LINE" "$FILEPATH"; then
-    echo '[INFO] ChallengeResponseAuthentication is already set to no.'
-else
-    # Append the line to the end of the file
-    if ! echo "$LINE" >> $FILEPATH; then
-        echo '[ERROR] Failed to disable ChallengeResponseAuthentication. Exiting.'
-        exit 1
-    fi
-fi
-
-echo "[INFO] Allowing SSH only for user '$username'..."
-
-# Check if 'AllowUsers' is already set for the user to avoid duplications
-if grep -q "^AllowUsers.*$username" "$FILEPATH"; then
-    echo "[INFO] SSH access is already restricted to user '$username'."
-else
-    # Append the username to /etc/ssh/sshd_config
-    if ! echo "AllowUsers $username" >> $FILEPATH; then
-        echo "[ERROR] Failed to restrict SSH access to user '$username'. Exiting."
-        exit 1
-    fi
-fi
-
-# Restart SSH service
-echo "[INFO] Restarting SSH service..."
-systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
-
-echo "[INFO] SSH security configuration completed."
-
-#######################################
-# Configure firewall with UFW         #
-#######################################
-echo
-echo "[INFO] Configuring firewall with UFW..."
-
-# Reset UFW to default
+# Firewall: UFW
+log_info "Configuring UFW firewall..."
 ufw --force reset
-
-# Set default policies
 ufw default deny incoming
 ufw default allow outgoing
+ufw allow OpenSSH
+ufw --force enable
 
-# Allow SSH
-ufw allow ssh
-
-# Enable UFW
-echo "[INFO] Enabling UFW firewall..."
-echo "y" | ufw enable
-
-echo "[INFO] Firewall configuration completed."
-
-#######################################
-# Create user and configure sudo      #
-#######################################
-echo
-echo "[INFO] Creating user and configuring sudo access..."
-
-# Create user
-adduser --gecos ',,,,' --disabled-password $username
-
-# Add user to sudo group
-usermod -aG sudo $username
-
-# Set password
-echo "$username:$password" | chpasswd
-
-# Lock root account
+# Create user and set password
+log_info "Creating sudo user '$USERNAME'..."
+useradd -m -s /bin/bash -G sudo "$USERNAME"
+echo "$USERNAME:$PASS1" | chpasswd
 passwd -l root
 
-# Verify user creation
-if id "$username" &>/dev/null; then
-    echo "[INFO] User '$username' created successfully."
-else
-    echo "[ERROR] Failed to create user '$username'."
-    exit 1
+# Setup SSH key for user if provided
+if [[ "$SSH_CHOICE" =~ ^[Yy]$ ]]; then
+    log_info "Installing SSH key for $USERNAME"
+    mkdir -p /home/$USERNAME/.ssh
+    echo "$PUBKEY" > /home/$USERNAME/.ssh/authorized_keys
+    chown -R $USERNAME:$USERNAME /home/$USERNAME/.ssh
+    chmod 700 /home/$USERNAME/.ssh
+    chmod 600 /home/$USERNAME/.ssh/authorized_keys
 fi
 
-# Set up SSH for the created user if requested
-if [ "$ssh_key_added" = true ]; then
-    echo "[INFO] Setting up SSH access for user '$username'..."
-    
-    # Ensure .ssh directory exists
-    mkdir -p /home/$username/.ssh
-    touch /home/$username/.ssh/authorized_keys
-    echo "$public_key" >> /home/$username/.ssh/authorized_keys
-    chown -R $username:$username /home/$username/.ssh
-    chmod 700 /home/$username/.ssh
-    chmod 600 /home/$username/.ssh/authorized_keys
-    
-    echo "[INFO] SSH public key added successfully."
-fi
-
-echo
-echo "[INFO] VM security configuration completed successfully."
-echo "[INFO] You can now log in as:"
-echo "    $username"
-if [ "$ssh_key_added" = true ]; then
-    echo "[INFO] Or via SSH:"
-    echo "    ssh $username@$IP_ADDRESS"
-    echo
-    echo "[NOTE] If you receive a 'Host key verification failed' error, run:"
-    echo "    ssh-keygen -f \"$HOME/.ssh/known_hosts\" -R \"$IP_ADDRESS\""
-    echo "This removes the old host key for this IP address from your known_hosts file."
-fi
-echo
-echo "====================================="
-echo "        Configuration Complete        "
-echo "====================================="
+log_info "Security setup for Debian 13 VM is complete."
