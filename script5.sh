@@ -30,8 +30,121 @@ check_zfs_installed() {
         
         # Suggest installation method based on detected OS
         if [ -f /etc/debian_version ]; then
-            print_msg "$YELLOW" "To install ZFS on Debian/Ubuntu, run:"
-            echo "sudo apt update && sudo apt install zfsutils-linux"
+            print_msg "$YELLOW" "Installing ZFS on Debian/Ubuntu with backports and custom ARC settings..."
+            
+            # Check if lsb-release package is installed, if not install it without prompting
+            if ! dpkg -l | grep -q lsb-release; then
+                print_msg "$BLUE" "Installing lsb-release package..."
+                apt-get update -qq > /dev/null
+                apt-get install -y lsb-release -qq > /dev/null
+                
+                # Verify installation was successful
+                if ! dpkg -l | grep -q lsb-release; then
+                    print_msg "$RED" "Error: Failed to install lsb-release package."
+                    exit 1
+                fi
+            fi
+
+            # Try to get Debian version with error handling
+            debian_version=$(lsb_release -cs 2>/dev/null)
+
+            # Check if the command succeeded and if we got a value
+            if [ $? -ne 0 ] || [ -z "$debian_version" ]; then
+                print_msg "$RED" "Error: Failed to determine Debian version."
+                print_msg "$RED" "This might not be a Debian-based system or lsb_release is not working properly."
+                exit 1
+            fi
+
+            # Add the backports repository based on Debian version
+            sudo tee /etc/apt/sources.list.d/${debian_version}-backports.list > /dev/null << EOF
+deb http://deb.debian.org/debian ${debian_version}-backports main contrib
+deb-src http://deb.debian.org/debian ${debian_version}-backports main contrib
+EOF
+
+            # Create the ZFS preferences file with the correct version
+            sudo tee /etc/apt/preferences.d/90_zfs > /dev/null << EOF
+Package: src:zfs-linux
+Pin: release n=${debian_version}-backports
+Pin-Priority: 990
+EOF
+
+            # Wait a moment for apt sources to update
+            sleep 2
+
+            # Install the packages
+            print_msg "$BLUE" "Updating package lists and installing ZFS packages..."
+            sudo apt update
+            # Get current kernel version and install appropriate headers
+            kernel_version=$(uname -r)
+            print_msg "$BLUE" "Current kernel: $kernel_version"
+            sudo apt install -y dpkg-dev linux-headers-$kernel_version
+            # Install ZFS packages
+            sudo apt install -y zfs-dkms zfsutils-linux
+
+            # Enable ZFS services for auto-bring-up
+            print_msg "$BLUE" "Enabling ZFS services..."
+            sudo systemctl enable \
+                zfs-import-scan.service \
+                zfs-mount.service \
+                zfs-share.service \
+                zfs-zed.service \
+                zfs.target
+
+            # Set ZFS ARC max to 20% of total RAM, capped at 16 GiB
+            print_msg "$BLUE" "Configuring ZFS ARC max size..."
+            PERCENTAGE=20
+            MAX_ARC_BYTES=17179869184
+
+            # Get total RAM in KB from /proc/meminfo
+            TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+
+            # Fallback to free command if /proc/meminfo unavailable
+            if [ -z "$TOTAL_RAM_KB" ]; then
+                print_msg "$YELLOW" "Warning: Could not read MemTotal from /proc/meminfo. Using free command."
+                if command -v free &> /dev/null; then
+                    TOTAL_RAM_KB=$(free | grep Mem: | awk '{print $2}')
+                else
+                    print_msg "$RED" "Error: Could not determine total RAM size."
+                    exit 1
+                fi
+            fi
+
+            # Convert RAM to bytes
+            TOTAL_RAM_BYTES=$((TOTAL_RAM_KB * 1024))
+
+            # Calculate ARC max as 20% of total RAM
+            ARC_LIMIT=$((TOTAL_RAM_BYTES * PERCENTAGE / 100))
+
+            # Cap at 16 GiB
+            if [ $ARC_LIMIT -gt $MAX_ARC_BYTES ]; then
+                ARC_LIMIT=$MAX_ARC_BYTES
+            fi
+
+            # Convert ARC limit to GB (1 GB = 10^9 bytes) with three decimal places
+            ARC_LIMIT_WHOLE=$((ARC_LIMIT / 1000000000))
+            ARC_LIMIT_FRAC=$(( (ARC_LIMIT % 1000000000) / 1000000 ))
+            ARC_LIMIT_GB=$(printf "%d.%03d" $ARC_LIMIT_WHOLE $ARC_LIMIT_FRAC)
+
+            # Set ARC max immediately
+            echo $ARC_LIMIT | sudo tee /sys/module/zfs/parameters/zfs_arc_max > /dev/null
+
+            # Check if /etc/modprobe.d/zfs.conf exists, create or update
+            CONFIG_FILE="/etc/modprobe.d/zfs.conf"
+            NEW_SETTING="options zfs zfs_arc_max=$ARC_LIMIT"
+
+            if [ ! -f "$CONFIG_FILE" ]; then
+                echo "$NEW_SETTING" | sudo tee "$CONFIG_FILE" > /dev/null
+            else
+                if grep -q "zfs_arc_max" "$CONFIG_FILE"; then
+                    sudo sed -i "s/.*zfs_arc_max.*/$NEW_SETTING/" "$CONFIG_FILE"
+                else
+                    echo "$NEW_SETTING" | sudo tee -a "$CONFIG_FILE" > /dev/null
+                fi
+            fi
+
+            print_msg "$GREEN" "ZFS ARC max set to $ARC_LIMIT_GB GB"
+            print_msg "$GREEN" "✓ ZFS installation and configuration completed."
+        
         elif [ -f /etc/redhat-release ]; then
             print_msg "$YELLOW" "To install ZFS on RHEL/CentOS/Fedora, run:"
             echo "sudo dnf install epel-release"
