@@ -773,7 +773,7 @@ create_zfs_pool() {
     
     # Check minimum disk requirements based on pool type
     case $pool_type in
-        "mirror")
+        "mirror"|"multi_mirror")
             if [ ${#selected_disks[@]} -lt 2 ]; then
                 print_msg "$RED" "Mirror requires at least 2 disks."
                 return 1
@@ -812,6 +812,104 @@ create_zfs_pool() {
             break
         fi
     done
+    
+    # Step 3.5: Configure mirror vdevs (if mirror type selected)
+    mirror_vdevs=()
+    local disks_per_mirror=2  # Default value
+    if [ "$pool_type" = "mirror" ] && [ ${#selected_disks[@]} -gt 2 ]; then
+        print_msg "$BLUE" "Mirror Pool Configuration"
+        print_msg "$BLUE" "========================"
+        print_msg "$YELLOW" "You selected ${#selected_disks[@]} disks for mirroring. How do you want to configure them?"
+        echo "1) Single mirror vdev with all ${#selected_disks[@]} disks (all disks mirror each other)"
+        echo "2) Multiple mirror vdevs (configure pairs/groups)"
+        read -r mirror_config_choice
+        
+        case $mirror_config_choice in
+            1)
+                print_msg "$GREEN" "Creating single ${#selected_disks[@]}-way mirror vdev."
+                # Keep existing behavior - single mirror with all disks
+                ;;
+            2)
+                print_msg "$BLUE" "Configuring multiple mirror vdevs..."
+                
+                # Ask for disks per mirror vdev
+                print_msg "$YELLOW" "How many disks per mirror vdev? (typically 2 or 3):"
+                read -r disks_per_mirror
+                
+                while ! [[ $disks_per_mirror =~ ^[0-9]+$ ]] || [ $disks_per_mirror -lt 2 ]; do
+                    print_msg "$RED" "Please enter a valid number (2 or higher):"
+                    read -r disks_per_mirror
+                done
+                
+                # Check if we can evenly divide the disks
+                local total_disks=${#selected_disks[@]}
+                local num_vdevs=$((total_disks / disks_per_mirror))
+                local remaining_disks=$((total_disks % disks_per_mirror))
+                
+                if [ $remaining_disks -ne 0 ]; then
+                    print_msg "$YELLOW" "Warning: $total_disks disks cannot be evenly divided into groups of $disks_per_mirror."
+                    print_msg "$YELLOW" "This would create $num_vdevs complete mirror vdevs with $remaining_disks disk(s) left over."
+                    print_msg "$YELLOW" "Options:"
+                    echo "1) Proceed anyway (leftover disks will form a smaller mirror)"
+                    echo "2) Choose a different number of disks per mirror"
+                    echo "3) Remove some disks from selection"
+                    read -r leftover_choice
+                    
+                    case $leftover_choice in
+                        1)
+                            print_msg "$GREEN" "Proceeding with uneven distribution."
+                            ;;
+                        2)
+                            print_msg "$YELLOW" "How many disks per mirror vdev?"
+                            read -r disks_per_mirror
+                            while ! [[ $disks_per_mirror =~ ^[0-9]+$ ]] || [ $disks_per_mirror -lt 2 ]; do
+                                print_msg "$RED" "Please enter a valid number (2 or higher):"
+                                read -r disks_per_mirror
+                            done
+                            ;;
+                        3)
+                            print_msg "$YELLOW" "Please re-run pool creation and select a different number of disks."
+                            return 1
+                            ;;
+                    esac
+                fi
+                
+                # Create mirror vdev groups
+                local disk_index=0
+                local vdev_count=0
+                
+                while [ $disk_index -lt ${#selected_disks[@]} ]; do
+                    local vdev_disks=()
+                    local disks_in_this_vdev=0
+                    
+                    # Add disks to this vdev
+                    while [ $disks_in_this_vdev -lt $disks_per_mirror ] && [ $disk_index -lt ${#selected_disks[@]} ]; do
+                        vdev_disks+=("${selected_disks[$disk_index]}")
+                        disk_index=$((disk_index + 1))
+                        disks_in_this_vdev=$((disks_in_this_vdev + 1))
+                    done
+                    
+                    # If we have remaining disks that don't fill a complete vdev, add them anyway
+                    if [ $disk_index -eq ${#selected_disks[@]} ] && [ $disks_in_this_vdev -gt 0 ]; then
+                        mirror_vdevs+=("${vdev_disks[@]}")
+                        vdev_count=$((vdev_count + 1))
+                        print_msg "$GREEN" "Mirror vdev $vdev_count: ${vdev_disks[*]}"
+                        break
+                    elif [ $disks_in_this_vdev -eq $disks_per_mirror ]; then
+                        mirror_vdevs+=("${vdev_disks[@]}")
+                        vdev_count=$((vdev_count + 1))
+                        print_msg "$GREEN" "Mirror vdev $vdev_count: ${vdev_disks[*]}"
+                    fi
+                done
+                
+                # Update pool_type to indicate multiple vdevs
+                pool_type="multi_mirror"
+                ;;
+            *)
+                print_msg "$RED" "Invalid selection. Using single mirror vdev."
+                ;;
+        esac
+    fi
     
     # Step 4: Additional devices (cache, log, spare)
     print_msg "$YELLOW" "Do you want to add additional devices? (y/n)"
@@ -1062,8 +1160,34 @@ create_zfs_pool() {
     # Step 6: Review and confirm
     print_msg "$BLUE" "Pool Creation Summary:"
     echo "Pool name: $pool_name"
-    echo "Pool type: ${pool_type:-stripe}"
-    echo "Selected disks: ${selected_disks[*]}"
+    if [ "$pool_type" = "multi_mirror" ]; then
+        echo "Pool type: Multiple mirror vdevs"
+        local vdev_num=1
+        local disk_index=0
+        while [ $disk_index -lt ${#selected_disks[@]} ]; do
+            local vdev_disks=()
+            local disks_in_vdev=0
+            local max_disks=$disks_per_mirror
+            
+            # Handle last vdev which might have fewer disks
+            local remaining_disks=$((${#selected_disks[@]} - disk_index))
+            if [ $remaining_disks -lt $disks_per_mirror ]; then
+                max_disks=$remaining_disks
+            fi
+            
+            while [ $disks_in_vdev -lt $max_disks ] && [ $disk_index -lt ${#selected_disks[@]} ]; do
+                vdev_disks+=("${selected_disks[$disk_index]}")
+                disk_index=$((disk_index + 1))
+                disks_in_vdev=$((disks_in_vdev + 1))
+            done
+            
+            echo "  Mirror vdev $vdev_num: ${vdev_disks[*]}"
+            vdev_num=$((vdev_num + 1))
+        done
+    else
+        echo "Pool type: ${pool_type:-stripe}"
+        echo "Selected disks: ${selected_disks[*]}"
+    fi
     if [ ${#cache_devices[@]} -gt 0 ]; then
         echo "Cache devices: ${cache_devices[*]}"
     fi
@@ -1089,13 +1213,34 @@ create_zfs_pool() {
             cmd_parts+=("${option_array[@]}")
         fi
         
-        # Add pool type
-        if [ -n "$pool_type" ]; then
-            cmd_parts+=("$pool_type")
+        # Add pool topology based on type
+        if [ "$pool_type" = "multi_mirror" ]; then
+            # Multiple mirror vdevs
+            local disk_index=0
+            while [ $disk_index -lt ${#selected_disks[@]} ]; do
+                cmd_parts+=("mirror")
+                local disks_in_vdev=0
+                local max_disks=$disks_per_mirror
+                
+                # Handle last vdev which might have fewer disks
+                local remaining_disks=$((${#selected_disks[@]} - disk_index))
+                if [ $remaining_disks -lt $disks_per_mirror ]; then
+                    max_disks=$remaining_disks
+                fi
+                
+                while [ $disks_in_vdev -lt $max_disks ] && [ $disk_index -lt ${#selected_disks[@]} ]; do
+                    cmd_parts+=("${selected_disks[$disk_index]}")
+                    disk_index=$((disk_index + 1))
+                    disks_in_vdev=$((disks_in_vdev + 1))
+                done
+            done
+        else
+            # Single vdev (stripe, mirror, raidz, etc.)
+            if [ -n "$pool_type" ]; then
+                cmd_parts+=("$pool_type")
+            fi
+            cmd_parts+=("${selected_disks[@]}")
         fi
-        
-        # Add data disks
-        cmd_parts+=("${selected_disks[@]}")
         
         # Add cache devices
         if [ ${#cache_devices[@]} -gt 0 ]; then
@@ -1287,22 +1432,31 @@ export_import_pool() {
             print_msg "$YELLOW" "Import with a different name? (y/n)"
             read -r rename_choice
             
-            local rename_option=""
             if [[ $rename_choice =~ ^[Yy]$ ]]; then
                 print_msg "$YELLOW" "Enter new pool name:"
                 read -r new_name
                 if [ -n "$new_name" ]; then
-                    rename_option="-n $new_name"
+                    print_msg "$BLUE" "Executing: run_cmd zpool import $pool_name $new_name"
+                    
+                    if run_cmd zpool import "$pool_name" "$new_name"; then
+                        print_msg "$GREEN" "Successfully imported ZFS pool as '$new_name'."
+                    else
+                        print_msg "$RED" "Failed to import ZFS pool. See error above."
+                        return 1
+                    fi
+                else
+                    print_msg "$RED" "No new pool name provided."
+                    return 1
                 fi
-            fi
-            
-            print_msg "$BLUE" "Executing: run_cmd zpool import $rename_option $pool_name"
-            
-            if run_cmd zpool import $rename_option "$pool_name"; then
-                print_msg "$GREEN" "Successfully imported ZFS pool."
             else
-                print_msg "$RED" "Failed to import ZFS pool. See error above."
-                return 1
+                print_msg "$BLUE" "Executing: run_cmd zpool import $pool_name"
+                
+                if run_cmd zpool import "$pool_name"; then
+                    print_msg "$GREEN" "Successfully imported ZFS pool '$pool_name'."
+                else
+                    print_msg "$RED" "Failed to import ZFS pool. See error above."
+                    return 1
+                fi
             fi
             ;;
             
