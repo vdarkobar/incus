@@ -31,7 +31,7 @@ $(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script4.sh)
 
 <br/>  
 
-#### ZFS Pool Creation Helper Script  
+#### ZFS Helper Script  
 *Run script on the host*  
 ```bash
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/vdarkobar/incus/main/script5.sh)"
