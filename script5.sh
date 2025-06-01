@@ -813,7 +813,207 @@ create_zfs_pool() {
         fi
     done
     
-    # Step 4: Additional options
+    # Step 4: Additional devices (cache, log, spare)
+    print_msg "$YELLOW" "Do you want to add additional devices? (y/n)"
+    read -r add_additional_choice
+    
+    cache_devices=()
+    log_devices=()
+    spare_devices=()
+    
+    # Function to check if a device is already selected
+    is_device_selected() {
+        local device_path="$1"
+        local device_basename=$(basename "$device_path")
+        
+        # Check against data disks
+        for selected in "${selected_disks[@]}"; do
+            if [[ "$selected" == "$device_path" ]] || [[ "$(basename "$selected")" == "$device_basename" ]]; then
+                return 0
+            fi
+        done
+        
+        # Check against cache devices
+        for selected in "${cache_devices[@]}"; do
+            if [[ "$selected" == "$device_path" ]] || [[ "$(basename "$selected")" == "$device_basename" ]]; then
+                return 0
+            fi
+        done
+        
+        # Check against log devices
+        for selected in "${log_devices[@]}"; do
+            if [[ "$selected" == "$device_path" ]] || [[ "$(basename "$selected")" == "$device_basename" ]]; then
+                return 0
+            fi
+        done
+        
+        return 1
+    }
+    
+    # Function to show available devices
+    show_available_devices() {
+        local device_type="$1"
+        print_msg "$BLUE" "Available disks for $device_type (excluding already assigned devices):"
+        
+        if [ "$disk_selection_type" -eq 1 ]; then
+            local found_any=false
+            while IFS= read -r disk_path; do
+                local disk_basename=$(basename "$disk_path")
+                if [[ ! "$disk_basename" =~ -part[0-9]+$ ]] && [[ ! "$disk_basename" =~ cdrom|dvd ]] && [[ -b "$(readlink -f "$disk_path" 2>/dev/null)" ]]; then
+                    if ! is_device_selected "$disk_path"; then
+                        echo "  - $disk_basename"
+                        found_any=true
+                    fi
+                fi
+            done < <(find /dev/disk/by-id -maxdepth 1 -type l 2>/dev/null | sort)
+            
+            if [ "$found_any" = false ]; then
+                print_msg "$YELLOW" "  No available devices remaining."
+            fi
+        else
+            local found_any=false
+            while IFS= read -r line; do
+                if [[ -n "$line" ]] && [[ "$line" != *"NAME"* ]]; then
+                    read -r name size model <<< "$line"
+                    if [[ -n "$name" ]]; then
+                        local device_path="/dev/$name"
+                        if ! is_device_selected "$device_path"; then
+                            echo "  - $name ($size, $model)"
+                            found_any=true
+                        fi
+                    fi
+                fi
+            done < <(lsblk -d -o NAME,SIZE,MODEL | grep -v "loop")
+            
+            if [ "$found_any" = false ]; then
+                print_msg "$YELLOW" "  No available devices remaining."
+            fi
+        fi
+    }
+    
+    if [[ $add_additional_choice =~ ^[Yy]$ ]]; then
+        # Cache devices (L2ARC)
+        print_msg "$YELLOW" "Add cache devices (L2ARC) for read acceleration? (y/n)"
+        read -r add_cache_choice
+        
+        if [[ $add_cache_choice =~ ^[Yy]$ ]]; then
+            show_available_devices "cache"
+            
+            print_msg "$YELLOW" "Enter cache device IDs/names (space-separated, or press Enter for none):"
+            read -r cache_input
+            
+            if [ -n "$cache_input" ]; then
+                for device in $cache_input; do
+                    if [ "$disk_selection_type" -eq 1 ]; then
+                        full_path="/dev/disk/by-id/$device"
+                        if [ -L "$full_path" ]; then
+                            cache_devices+=("$full_path")
+                        else
+                            print_msg "$RED" "Cache device '$device' not found."
+                            return 1
+                        fi
+                    else
+                        full_path="/dev/$device"
+                        if [ -b "$full_path" ]; then
+                            cache_devices+=("$full_path")
+                        else
+                            print_msg "$RED" "Cache device '$device' not found."
+                            return 1
+                        fi
+                    fi
+                done
+                print_msg "$GREEN" "Added ${#cache_devices[@]} cache device(s)."
+            fi
+        fi
+        
+        # Log devices (SLOG/ZIL)
+        print_msg "$YELLOW" "Add log devices (SLOG/ZIL) for write acceleration? (y/n)"
+        read -r add_log_choice
+        
+        if [[ $add_log_choice =~ ^[Yy]$ ]]; then
+            show_available_devices "log"
+            
+            print_msg "$BLUE" "Log devices can be single or mirrored for redundancy."
+            print_msg "$YELLOW" "How many log devices do you want? (Enter a number: 1 for single, 2+ for mirror):"
+            read -r log_count
+            
+            # Validate that log_count is a number
+            while ! [[ $log_count =~ ^[0-9]+$ ]] || [ $log_count -eq 0 ]; do
+                print_msg "$RED" "Please enter a valid number (1 or higher):"
+                read -r log_count
+            done
+            
+            print_msg "$YELLOW" "Enter $log_count log device ID(s)/name(s) (space-separated):"
+            read -r log_input
+            
+            # Validate that we got the right number of devices
+            log_device_array=($log_input)
+            while [ ${#log_device_array[@]} -ne $log_count ]; do
+                print_msg "$RED" "Expected $log_count devices but got ${#log_device_array[@]}. Please try again:"
+                read -r log_input
+                log_device_array=($log_input)
+            done
+            
+            # Process the log devices
+            for device in "${log_device_array[@]}"; do
+                if [ "$disk_selection_type" -eq 1 ]; then
+                    full_path="/dev/disk/by-id/$device"
+                    if [ -L "$full_path" ]; then
+                        log_devices+=("$full_path")
+                    else
+                        print_msg "$RED" "Log device '$device' not found."
+                        return 1
+                    fi
+                else
+                    full_path="/dev/$device"
+                    if [ -b "$full_path" ]; then
+                        log_devices+=("$full_path")
+                    else
+                        print_msg "$RED" "Log device '$device' not found."
+                        return 1
+                    fi
+                fi
+            done
+            print_msg "$GREEN" "Added ${#log_devices[@]} log device(s)."
+        fi
+        
+        # Spare devices
+        print_msg "$YELLOW" "Add hot spare devices? (y/n)"
+        read -r add_spare_choice
+        
+        if [[ $add_spare_choice =~ ^[Yy]$ ]]; then
+            show_available_devices "spare"
+            
+            print_msg "$YELLOW" "Enter spare device IDs/names (space-separated, or press Enter for none):"
+            read -r spare_input
+            
+            if [ -n "$spare_input" ]; then
+                for device in $spare_input; do
+                    if [ "$disk_selection_type" -eq 1 ]; then
+                        full_path="/dev/disk/by-id/$device"
+                        if [ -L "$full_path" ]; then
+                            spare_devices+=("$full_path")
+                        else
+                            print_msg "$RED" "Spare device '$device' not found."
+                            return 1
+                        fi
+                    else
+                        full_path="/dev/$device"
+                        if [ -b "$full_path" ]; then
+                            spare_devices+=("$full_path")
+                        else
+                            print_msg "$RED" "Spare device '$device' not found."
+                            return 1
+                        fi
+                    fi
+                done
+                print_msg "$GREEN" "Added ${#spare_devices[@]} spare device(s)."
+            fi
+        fi
+    fi
+    
+    # Step 5: Additional options
+    # Step 5: Additional options
     print_msg "$YELLOW" "Do you want to specify additional pool options? (y/n)"
     read -r add_options_choice
     
@@ -859,11 +1059,20 @@ create_zfs_pool() {
         options="-o ashift=12 -O compression=lz4 -O atime=off"
     fi
     
-    # Step 5: Review and confirm
+    # Step 6: Review and confirm
     print_msg "$BLUE" "Pool Creation Summary:"
     echo "Pool name: $pool_name"
     echo "Pool type: ${pool_type:-stripe}"
     echo "Selected disks: ${selected_disks[*]}"
+    if [ ${#cache_devices[@]} -gt 0 ]; then
+        echo "Cache devices: ${cache_devices[*]}"
+    fi
+    if [ ${#log_devices[@]} -gt 0 ]; then
+        echo "Log devices: ${log_devices[*]}"
+    fi
+    if [ ${#spare_devices[@]} -gt 0 ]; then
+        echo "Spare devices: ${spare_devices[*]}"
+    fi
     echo "Options: $options"
     
     print_msg "$YELLOW" "Create the pool with these settings? (y/n)"
@@ -885,8 +1094,30 @@ create_zfs_pool() {
             cmd_parts+=("$pool_type")
         fi
         
-        # Add disks
+        # Add data disks
         cmd_parts+=("${selected_disks[@]}")
+        
+        # Add cache devices
+        if [ ${#cache_devices[@]} -gt 0 ]; then
+            cmd_parts+=("cache")
+            cmd_parts+=("${cache_devices[@]}")
+        fi
+        
+        # Add log devices
+        if [ ${#log_devices[@]} -gt 0 ]; then
+            cmd_parts+=("log")
+            if [ ${#log_devices[@]} -gt 1 ]; then
+                # Multiple log devices = mirror
+                cmd_parts+=("mirror")
+            fi
+            cmd_parts+=("${log_devices[@]}")
+        fi
+        
+        # Add spare devices
+        if [ ${#spare_devices[@]} -gt 0 ]; then
+            cmd_parts+=("spare")
+            cmd_parts+=("${spare_devices[@]}")
+        fi
         
         print_msg "$BLUE" "Executing: run_cmd ${cmd_parts[*]}"
         
