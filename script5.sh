@@ -3,6 +3,9 @@
 # ZFS Pool Creation Helper Script
 # This script helps with creating ZFS pools by providing various utilities
 # such as checking ZFS installation, listing disks, and assisting with pool creation.
+# 
+# Designed to work on Proxmox VE and other systems - automatically detects if running
+# as root and uses sudo only when necessary.
 
 # ANSI color codes
 RED='\033[0;31m'
@@ -18,6 +21,17 @@ print_msg() {
     echo -e "${color}${message}${NC}"
 }
 
+# Function to run commands with or without sudo based on current user
+run_cmd() {
+    if [ "$EUID" -eq 0 ]; then
+        # Running as root, no need for sudo
+        "$@"
+    else
+        # Not running as root, use sudo
+        sudo "$@"
+    fi
+}
+
 # Function to check if ZFS is installed
 check_zfs_installed() {
     print_msg "$BLUE" "Checking if ZFS is installed..."
@@ -28,136 +42,237 @@ check_zfs_installed() {
     else
         print_msg "$RED" "✗ ZFS is not installed."
         
-        # Suggest installation method based on detected OS
-        if [ -f /etc/debian_version ]; then
-            print_msg "$YELLOW" "Installing ZFS on Debian/Ubuntu with backports and custom ARC settings..."
-            
-            # Check if lsb-release package is installed, if not install it without prompting
-            if ! dpkg -l | grep -q lsb-release; then
-                print_msg "$BLUE" "Installing lsb-release package..."
-                apt-get update -qq > /dev/null
-                apt-get install -y lsb-release -qq > /dev/null
-                
-                # Verify installation was successful
-                if ! dpkg -l | grep -q lsb-release; then
-                    print_msg "$RED" "Error: Failed to install lsb-release package."
-                    exit 1
-                fi
-            fi
-
-            # Try to get Debian version with error handling
-            debian_version=$(lsb_release -cs 2>/dev/null)
-
-            # Check if the command succeeded and if we got a value
-            if [ $? -ne 0 ] || [ -z "$debian_version" ]; then
-                print_msg "$RED" "Error: Failed to determine Debian version."
-                print_msg "$RED" "This might not be a Debian-based system or lsb_release is not working properly."
-                exit 1
-            fi
-
-            # Add the backports repository based on Debian version
-            sudo tee /etc/apt/sources.list.d/${debian_version}-backports.list > /dev/null << EOF
-deb http://deb.debian.org/debian ${debian_version}-backports main contrib
-deb-src http://deb.debian.org/debian ${debian_version}-backports main contrib
-EOF
-
-            # Create the ZFS preferences file with the correct version
-            sudo tee /etc/apt/preferences.d/90_zfs > /dev/null << EOF
-Package: src:zfs-linux
-Pin: release n=${debian_version}-backports
-Pin-Priority: 990
-EOF
-
-            # Wait a moment for apt sources to update
-            sleep 2
-
-            # Install the packages
-            print_msg "$BLUE" "Updating package lists and installing ZFS packages..."
-            sudo apt update
-            # Get current kernel version and install appropriate headers
-            kernel_version=$(uname -r)
-            print_msg "$BLUE" "Current kernel: $kernel_version"
-            sudo apt install -y dpkg-dev linux-headers-$kernel_version
-            # Install ZFS packages
-            sudo apt install -y zfs-dkms zfsutils-linux
-
-            # Enable ZFS services for auto-bring-up
-            print_msg "$BLUE" "Enabling ZFS services..."
-            sudo systemctl enable \
-                zfs-import-scan.service \
-                zfs-mount.service \
-                zfs-share.service \
-                zfs-zed.service \
-                zfs.target
-
-            # Set ZFS ARC max to 20% of total RAM, capped at 16 GiB
-            print_msg "$BLUE" "Configuring ZFS ARC max size..."
-            PERCENTAGE=20
-            MAX_ARC_BYTES=17179869184
-
-            # Get total RAM in KB from /proc/meminfo
-            TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-
-            # Fallback to free command if /proc/meminfo unavailable
-            if [ -z "$TOTAL_RAM_KB" ]; then
-                print_msg "$YELLOW" "Warning: Could not read MemTotal from /proc/meminfo. Using free command."
-                if command -v free &> /dev/null; then
-                    TOTAL_RAM_KB=$(free | grep Mem: | awk '{print $2}')
-                else
-                    print_msg "$RED" "Error: Could not determine total RAM size."
-                    exit 1
-                fi
-            fi
-
-            # Convert RAM to bytes
-            TOTAL_RAM_BYTES=$((TOTAL_RAM_KB * 1024))
-
-            # Calculate ARC max as 20% of total RAM
-            ARC_LIMIT=$((TOTAL_RAM_BYTES * PERCENTAGE / 100))
-
-            # Cap at 16 GiB
-            if [ $ARC_LIMIT -gt $MAX_ARC_BYTES ]; then
-                ARC_LIMIT=$MAX_ARC_BYTES
-            fi
-
-            # Convert ARC limit to GB (1 GB = 10^9 bytes) with three decimal places
-            ARC_LIMIT_WHOLE=$((ARC_LIMIT / 1000000000))
-            ARC_LIMIT_FRAC=$(( (ARC_LIMIT % 1000000000) / 1000000 ))
-            ARC_LIMIT_GB=$(printf "%d.%03d" $ARC_LIMIT_WHOLE $ARC_LIMIT_FRAC)
-
-            # Set ARC max immediately
-            echo $ARC_LIMIT | sudo tee /sys/module/zfs/parameters/zfs_arc_max > /dev/null
-
-            # Check if /etc/modprobe.d/zfs.conf exists, create or update
-            CONFIG_FILE="/etc/modprobe.d/zfs.conf"
-            NEW_SETTING="options zfs zfs_arc_max=$ARC_LIMIT"
-
-            if [ ! -f "$CONFIG_FILE" ]; then
-                echo "$NEW_SETTING" | sudo tee "$CONFIG_FILE" > /dev/null
-            else
-                if grep -q "zfs_arc_max" "$CONFIG_FILE"; then
-                    sudo sed -i "s/.*zfs_arc_max.*/$NEW_SETTING/" "$CONFIG_FILE"
-                else
-                    echo "$NEW_SETTING" | sudo tee -a "$CONFIG_FILE" > /dev/null
-                fi
-            fi
-
-            print_msg "$GREEN" "ZFS ARC max set to $ARC_LIMIT_GB GB"
-            print_msg "$GREEN" "✓ ZFS installation and configuration completed."
+        # Offer to install ZFS
+        print_msg "$YELLOW" "Would you like to install ZFS now? (y/n)"
+        read -r install_choice
         
-        elif [ -f /etc/redhat-release ]; then
-            print_msg "$YELLOW" "To install ZFS on RHEL/CentOS/Fedora, run:"
-            echo "sudo dnf install epel-release"
-            echo "sudo dnf install zfs"
-        elif [ -f /etc/arch-release ]; then
-            print_msg "$YELLOW" "To install ZFS on Arch Linux, run:"
-            echo "sudo pacman -S zfs-dkms zfs-utils"
+        if [[ $install_choice =~ ^[Yy]$ ]]; then
+            install_zfs
         else
-            print_msg "$YELLOW" "Please install ZFS according to your distribution's documentation."
+            # Suggest installation method based on detected OS
+            if [ -f /etc/debian_version ]; then
+                print_msg "$YELLOW" "To install ZFS on Debian/Ubuntu manually, run:"
+                echo "apt update && apt install zfsutils-linux"
+            elif [ -f /etc/redhat-release ]; then
+                print_msg "$YELLOW" "To install ZFS on RHEL/CentOS/Fedora manually, run:"
+                echo "dnf install epel-release"
+                echo "dnf install zfs"
+            elif [ -f /etc/arch-release ]; then
+                print_msg "$YELLOW" "To install ZFS on Arch Linux manually, run:"
+                echo "pacman -S zfs-dkms zfs-utils"
+            else
+                print_msg "$YELLOW" "Please install ZFS according to your distribution's documentation."
+            fi
         fi
         
         return 1
     fi
+}
+
+# Function to install ZFS (comprehensive installation for Debian-based systems)
+install_zfs() {
+    print_msg "$BLUE" "Installing ZFS on Debian-based system..."
+    print_msg "$BLUE" "======================================="
+    
+    # Check if this is a Debian-based system
+    if [ ! -f /etc/debian_version ]; then
+        print_msg "$RED" "This installation method is designed for Debian-based systems only."
+        print_msg "$YELLOW" "Please install ZFS manually according to your distribution's documentation."
+        return 1
+    fi
+    
+    # Check if lsb-release package is installed, if not install it without prompting
+    print_msg "$BLUE" "Checking for lsb-release package..."
+    if ! dpkg -l | grep -q lsb-release; then
+        print_msg "$YELLOW" "Installing lsb-release package..."
+        run_cmd apt-get update -qq > /dev/null
+        run_cmd apt-get install -y lsb-release -qq > /dev/null
+        
+        # Verify installation was successful
+        if ! dpkg -l | grep -q lsb-release; then
+            print_msg "$RED" "Error: Failed to install lsb-release package."
+            return 1
+        fi
+        print_msg "$GREEN" "✓ lsb-release installed successfully."
+    else
+        print_msg "$GREEN" "✓ lsb-release already installed."
+    fi
+    
+    # Try to get Debian version with error handling
+    print_msg "$BLUE" "Detecting Debian version..."
+    debian_version=$(lsb_release -cs 2>/dev/null)
+    
+    # Check if the command succeeded and if we got a value
+    if [ $? -ne 0 ] || [ -z "$debian_version" ]; then
+        print_msg "$RED" "Error: Failed to determine Debian version."
+        print_msg "$RED" "This might not be a Debian-based system or lsb_release is not working properly."
+        return 1
+    fi
+    
+    print_msg "$GREEN" "✓ Detected Debian version: $debian_version"
+    
+    # Add the backports repository based on Debian version
+    print_msg "$BLUE" "Adding backports repository..."
+    run_cmd tee /etc/apt/sources.list.d/${debian_version}-backports.list > /dev/null << EOF
+deb http://deb.debian.org/debian ${debian_version}-backports main contrib
+deb-src http://deb.debian.org/debian ${debian_version}-backports main contrib
+EOF
+    
+    if [ $? -eq 0 ]; then
+        print_msg "$GREEN" "✓ Backports repository added."
+    else
+        print_msg "$RED" "✗ Failed to add backports repository."
+        return 1
+    fi
+    
+    # Create the ZFS preferences file with the correct version
+    print_msg "$BLUE" "Creating ZFS package preferences..."
+    run_cmd tee /etc/apt/preferences.d/90_zfs > /dev/null << EOF
+Package: src:zfs-linux
+Pin: release n=${debian_version}-backports
+Pin-Priority: 990
+EOF
+    
+    if [ $? -eq 0 ]; then
+        print_msg "$GREEN" "✓ ZFS preferences configured."
+    else
+        print_msg "$RED" "✗ Failed to create ZFS preferences."
+        return 1
+    fi
+    
+    # Wait a moment for apt sources to update
+    print_msg "$BLUE" "Waiting for repository updates..."
+    sleep 2
+    
+    # Update package lists
+    print_msg "$BLUE" "Updating package lists..."
+    if run_cmd apt update; then
+        print_msg "$GREEN" "✓ Package lists updated."
+    else
+        print_msg "$RED" "✗ Failed to update package lists."
+        return 1
+    fi
+    
+    # Get current kernel version and install appropriate headers
+    kernel_version=$(uname -r)
+    print_msg "$BLUE" "Installing kernel headers for: $kernel_version"
+    if run_cmd apt install -y dpkg-dev linux-headers-$kernel_version; then
+        print_msg "$GREEN" "✓ Kernel headers installed."
+    else
+        print_msg "$RED" "✗ Failed to install kernel headers."
+        return 1
+    fi
+    
+    # Install ZFS packages
+    print_msg "$BLUE" "Installing ZFS packages (this may take a while)..."
+    if run_cmd apt install -y zfs-dkms zfsutils-linux; then
+        print_msg "$GREEN" "✓ ZFS packages installed successfully."
+    else
+        print_msg "$RED" "✗ Failed to install ZFS packages."
+        return 1
+    fi
+    
+    # Enable ZFS services for auto-start
+    print_msg "$BLUE" "Enabling ZFS services for automatic startup..."
+    if run_cmd systemctl enable zfs-import-scan.service zfs-mount.service zfs-share.service zfs-zed.service zfs.target; then
+        print_msg "$GREEN" "✓ ZFS services enabled."
+    else
+        print_msg "$YELLOW" "⚠ Warning: Some ZFS services may not have been enabled properly."
+    fi
+    
+    # Configure ZFS ARC (Adaptive Replacement Cache)
+    print_msg "$BLUE" "Configuring ZFS ARC (Adaptive Replacement Cache)..."
+    configure_zfs_arc
+    
+    # Final verification
+    print_msg "$BLUE" "Verifying ZFS installation..."
+    if command -v zpool &> /dev/null && command -v zfs &> /dev/null; then
+        print_msg "$GREEN" "🎉 ZFS installation completed successfully!"
+        print_msg "$YELLOW" "Note: For optimal performance, consider rebooting the system."
+        print_msg "$YELLOW" "You can now create ZFS pools using this script."
+        return 0
+    else
+        print_msg "$RED" "✗ ZFS installation verification failed."
+        return 1
+    fi
+}
+
+# Function to configure ZFS ARC settings
+configure_zfs_arc() {
+    print_msg "$BLUE" "Configuring ZFS ARC to 20% of RAM (max 16 GiB)..."
+    
+    # Desired ARC percentage and max cap (16 GiB)
+    local PERCENTAGE=20
+    local MAX_ARC_BYTES=17179869184
+    
+    # Get total RAM in KB from /proc/meminfo
+    local TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    
+    # Fallback to free command if /proc/meminfo unavailable
+    if [ -z "$TOTAL_RAM_KB" ]; then
+        print_msg "$YELLOW" "Warning: Could not read MemTotal from /proc/meminfo. Using free command."
+        if command -v free &> /dev/null; then
+            TOTAL_RAM_KB=$(free | grep Mem: | awk '{print $2}')
+        else
+            print_msg "$RED" "Error: Could not determine total RAM size."
+            return 1
+        fi
+    fi
+    
+    # Convert RAM to bytes
+    local TOTAL_RAM_BYTES=$((TOTAL_RAM_KB * 1024))
+    
+    # Calculate ARC max as 20% of total RAM
+    local ARC_LIMIT=$((TOTAL_RAM_BYTES * PERCENTAGE / 100))
+    
+    # Cap at 16 GiB
+    if [ $ARC_LIMIT -gt $MAX_ARC_BYTES ]; then
+        ARC_LIMIT=$MAX_ARC_BYTES
+    fi
+    
+    # Convert ARC limit to GB (1 GB = 10^9 bytes) with three decimal places
+    local ARC_LIMIT_WHOLE=$((ARC_LIMIT / 1000000000))
+    local ARC_LIMIT_FRAC=$(( (ARC_LIMIT % 1000000000) / 1000000 ))
+    local ARC_LIMIT_GB=$(printf "%d.%03d" $ARC_LIMIT_WHOLE $ARC_LIMIT_FRAC)
+    
+    # Set ARC max immediately
+    if echo $ARC_LIMIT | run_cmd tee /sys/module/zfs/parameters/zfs_arc_max > /dev/null; then
+        print_msg "$GREEN" "✓ ZFS ARC runtime setting applied."
+    else
+        print_msg "$YELLOW" "⚠ Warning: Could not set runtime ARC limit (ZFS may not be loaded yet)."
+    fi
+    
+    # Check if /etc/modprobe.d/zfs.conf exists, create or update
+    local CONFIG_FILE="/etc/modprobe.d/zfs.conf"
+    local NEW_SETTING="options zfs zfs_arc_max=$ARC_LIMIT"
+    
+    if [ ! -f "$CONFIG_FILE" ]; then
+        if echo "$NEW_SETTING" | run_cmd tee "$CONFIG_FILE" > /dev/null; then
+            print_msg "$GREEN" "✓ ZFS configuration file created."
+        else
+            print_msg "$RED" "✗ Failed to create ZFS configuration file."
+            return 1
+        fi
+    else
+        if grep -q "zfs_arc_max" "$CONFIG_FILE"; then
+            if run_cmd sed -i "s/.*zfs_arc_max.*/$NEW_SETTING/" "$CONFIG_FILE"; then
+                print_msg "$GREEN" "✓ ZFS ARC setting updated in configuration."
+            else
+                print_msg "$RED" "✗ Failed to update ZFS configuration."
+                return 1
+            fi
+        else
+            if echo "$NEW_SETTING" | run_cmd tee -a "$CONFIG_FILE" > /dev/null; then
+                print_msg "$GREEN" "✓ ZFS ARC setting added to configuration."
+            else
+                print_msg "$RED" "✗ Failed to add ZFS ARC setting."
+                return 1
+            fi
+        fi
+    fi
+    
+    print_msg "$GREEN" "✓ ZFS ARC max configured to $ARC_LIMIT_GB GB"
+    print_msg "$YELLOW" "Note: ARC settings will be fully applied after reboot."
 }
 
 # Function to check ZFS version
@@ -184,55 +299,304 @@ check_zfs_version() {
     fi
 }
 
-# Function to list all disks by ID
+# Enhanced function to list all disks by ID (eliminates duplicates)
 list_disks_by_id() {
+    local disk_ids=()
+    local required_cmds=(find realpath lsblk)
+    
     print_msg "$BLUE" "Listing all disks by ID..."
     
-    if [ -d /dev/disk/by-id ]; then
-        local disk_ids=(/dev/disk/by-id/*)
-        
-        if [ ${#disk_ids[@]} -eq 0 ]; then
-            print_msg "$YELLOW" "No disks found by ID."
+    # Check for required commands
+    for cmd in "${required_cmds[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo "Error: $cmd not found" >&2
             return 1
         fi
+    done
+    
+    # Function to format disk info
+    format_disk_info() {
+        local disk_id="$1"
+        local canonical="$2"
+        local size model
         
-        print_msg "$GREEN" "Found ${#disk_ids[@]} disk IDs:"
+        # Verify the canonical path is actually a block device first
+        if [[ ! -b "$canonical" ]]; then
+            return 1  # Skip invalid block devices silently
+        fi
         
-        printf "%-60s %-20s %-10s %-20s\n" "DISK ID" "DEVICE" "SIZE" "MODEL"
-        echo "----------------------------------------------------------------------------------------------------"
-        
-        for disk_id in "${disk_ids[@]}"; do
-            # Skip partitions and CD-ROM/DVD devices
-            if [[ "$disk_id" == *"-part"* ]] || [[ "$disk_id" == *"cd"* ]] || [[ "$disk_id" == *"dvd"* ]]; then
-                continue
+        # Get disk details with better error handling and explicit stderr redirection
+        if { read -r size model; } 2>/dev/null < <(lsblk -d -n -o SIZE,MODEL "$canonical" 2>/dev/null); then
+            # Trim whitespace and handle empty model
+            size="${size// /}"
+            model="${model// /}"
+            [[ -z "$model" ]] && model="Unknown"
+            echo "$disk_id ($canonical, $size, $model)"
+        else
+            # Fallback: try to get just the size if model fails
+            if size=$(lsblk -d -n -o SIZE "$canonical" 2>/dev/null); then
+                size="${size// /}"
+                echo "$disk_id ($canonical, $size, Unknown)"
+            else
+                echo "$disk_id ($canonical)"
             fi
-            
-            local real_device=$(readlink -f "$disk_id")
-            local disk_name=$(basename "$real_device")
-            
-            # Get disk size and model
-            if [[ -b "$real_device" ]]; then
-                local size=$(lsblk -bno SIZE "$real_device" 2>/dev/null | head -n1)
-                local size_human=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$size" 2>/dev/null || echo "Unknown")
-                local model=$(lsblk -no MODEL "$real_device" 2>/dev/null | head -n1)
-                
-                # Shorten disk_id for display
-                local short_id=$(basename "$disk_id")
-                
-                printf "%-60s %-20s %-10s %-20s\n" "$short_id" "$real_device" "$size_human" "$model"
-            fi
+        fi
+    }
+    
+    # Exclusion patterns
+    local exclude_patterns=(-part[0-9]+$ lvm-pv-uuid cdrom dvd)
+    
+    # Check if pattern should be excluded
+    should_exclude() {
+        local disk_id="$1"
+        for pattern in "${exclude_patterns[@]}"; do
+            [[ "$disk_id" =~ $pattern ]] && return 0
         done
+        return 1
+    }
+    
+    # Try primary method: /dev/disk/by-id
+    if [[ -d /dev/disk/by-id ]] && [[ -n "$(find /dev/disk/by-id -maxdepth 1 -type l -print -quit 2>/dev/null)" ]]; then
+        local seen_devices=()
+        
+        while IFS= read -r disk_id; do
+            # Skip if matches exclusion patterns
+            should_exclude "$(basename "$disk_id")" && continue
+            
+            # Get canonical path
+            canonical=$(realpath "$disk_id" 2>/dev/null) || continue
+            [[ -b "$canonical" ]] || continue  # Ensure it's a block device
+            
+            # Skip if we've already processed this canonical device
+            local already_seen=false
+            for seen in "${seen_devices[@]}"; do
+                if [[ "$seen" == "$canonical" ]]; then
+                    already_seen=true
+                    break
+                fi
+            done
+            [[ "$already_seen" == true ]] && continue
+            
+            # Add formatted disk info (only if successful)
+            if formatted_info=$(format_disk_info "$disk_id" "$canonical"); then
+                disk_ids+=("$formatted_info")
+                seen_devices+=("$canonical")
+            fi
+        done < <(find /dev/disk/by-id -maxdepth 1 -type l 2>/dev/null | sort)
     else
-        print_msg "$RED" "Cannot list disks by ID - directory /dev/disk/by-id not found."
-        print_msg "$YELLOW" "Falling back to listing all block devices:"
+        # Fallback method: lsblk
+        echo "Warning: /dev/disk/by-id not found or empty, falling back to lsblk" >&2
         
-        printf "%-20s %-10s %-20s %-30s\n" "DEVICE" "SIZE" "MODEL" "MOUNTPOINT"
-        echo "--------------------------------------------------------------------------------"
-        
-        lsblk -o NAME,SIZE,MODEL,MOUNTPOINT | grep -v "loop"
-        
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            
+            # Parse lsblk output
+            read -r name size model <<< "$line"
+            [[ -n "$name" ]] || continue
+            
+            # Format output consistently with primary method
+            model="${model:-Unknown}"
+            disk_ids+=("/dev/$name (/dev/$name, $size, $model)")
+        done < <(lsblk -d -o NAME,SIZE,MODEL -n 2>/dev/null | grep -vE '^(loop|sr|ram)' | sort)
+    fi
+    
+    # Check if any disks were found
+    if [[ ${#disk_ids[@]} -eq 0 ]]; then
+        print_msg "$RED" "No disks found."
         return 1
     fi
+    
+    # Display results in table format
+    print_msg "$GREEN" "Found ${#disk_ids[@]} unique disks:"
+    printf "%-60s %-20s %-10s %-20s\n" "DISK ID" "DEVICE" "SIZE" "MODEL"
+    echo "----------------------------------------------------------------------------------------------------"
+    
+    for disk_info in "${disk_ids[@]}"; do
+        # Parse the formatted disk info
+        if [[ "$disk_info" =~ ^(.+)\ \(([^,]+),\ ([^,]+),\ (.+)\)$ ]]; then
+            local short_id=$(basename "${BASH_REMATCH[1]}")
+            local device="${BASH_REMATCH[2]}"
+            local size="${BASH_REMATCH[3]}"
+            local model="${BASH_REMATCH[4]}"
+            
+            printf "%-60s %-20s %-10s %-20s\n" "$short_id" "$device" "$size" "$model"
+        fi
+    done
+}
+
+# Enhanced disk usage checking function
+get_disk_usage() {
+    local disk=$1
+    local usage=()
+
+    # Extract the canonical device path from the disk string if it's formatted
+    local canonical_path
+    if [[ "$disk" =~ \(([^,]+), ]]; then
+        canonical_path="${BASH_REMATCH[1]}"
+    else
+        canonical_path="$disk"
+    fi
+
+    # Check if disk is part of a ZFS pool
+    if command -v zpool &> /dev/null; then
+        local zpool_status=$(zpool status -P 2>/dev/null)
+        if echo "$zpool_status" | grep -q "$canonical_path"; then
+            local pool=$(echo "$zpool_status" | awk -v d="$canonical_path" '$0 ~ d {print prev}' prev=$0 | grep '^pool:' | cut -d' ' -f2)
+            usage+=("ZFS pool '$pool'")
+        fi
+    fi
+
+    # Check if disk or its partitions are mounted
+    if lsblk -o MOUNTPOINT -r "$canonical_path" 2>/dev/null | grep -q .; then
+        usage+=("mounted")
+    fi
+
+    # Check if disk is part of a RAID array
+    if grep -q "$canonical_path" /proc/mdstat 2>/dev/null; then
+        usage+=("RAID array")
+    fi
+
+    # Check if disk is an LVM physical volume
+    if command -v pvs &> /dev/null && pvs --noheadings -o pv_name 2>/dev/null | grep -q "$canonical_path"; then
+        usage+=("LVM physical volume")
+    fi
+
+    # Check if disk has a filesystem
+    if blkid "$canonical_path" >/dev/null 2>&1; then
+        usage+=("has filesystem")
+    fi
+
+    echo "${usage[@]}"
+}
+
+# Function to zap (wipe) a disk
+zap_disk() {
+    local disk=$1
+    
+    # Extract the canonical device path from the disk string
+    local canonical_path
+    if [[ "$disk" =~ \(([^,]+), ]]; then
+        canonical_path="${BASH_REMATCH[1]}"
+    else
+        canonical_path="$disk"
+    fi
+    
+    print_msg "$YELLOW" "Zapping disk $canonical_path..."
+
+    # Remove ZFS labels if present
+    run_cmd zpool labelclear -f "$canonical_path" 2>/dev/null
+
+    # Wipe filesystem signatures
+    run_cmd wipefs -a "$canonical_path" 2>/dev/null
+
+    # Zero out the beginning of the disk
+    run_cmd dd if=/dev/zero of="$canonical_path" bs=1M count=1 2>/dev/null
+
+    print_msg "$GREEN" "Disk $canonical_path zapped successfully."
+}
+
+# Function to list and zap disks
+zap_disks() {
+    print_msg "$BLUE" "Disk Zapping Utility"
+    print_msg "$BLUE" "-------------------"
+    
+    # Get list of disks using the enhanced listing function
+    local disk_ids=()
+    local required_cmds=(find realpath lsblk)
+    
+    # Check for required commands
+    for cmd in "${required_cmds[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo "Error: $cmd not found" >&2
+            return 1
+        fi
+    done
+    
+    # Simplified disk collection for zapping interface
+    if [[ -d /dev/disk/by-id ]] && [[ -n "$(find /dev/disk/by-id -maxdepth 1 -type l -print -quit 2>/dev/null)" ]]; then
+        local seen_devices=()
+        local exclude_patterns=(-part[0-9]+$ lvm-pv-uuid cdrom dvd)
+        
+        should_exclude() {
+            local disk_id="$1"
+            for pattern in "${exclude_patterns[@]}"; do
+                [[ "$disk_id" =~ $pattern ]] && return 0
+            done
+            return 1
+        }
+        
+        while IFS= read -r disk_id; do
+            should_exclude "$(basename "$disk_id")" && continue
+            canonical=$(realpath "$disk_id" 2>/dev/null) || continue
+            [[ -b "$canonical" ]] || continue
+            
+            # Skip duplicates
+            local already_seen=false
+            for seen in "${seen_devices[@]}"; do
+                if [[ "$seen" == "$canonical" ]]; then
+                    already_seen=true
+                    break
+                fi
+            done
+            [[ "$already_seen" == true ]] && continue
+            
+            # Get disk info
+            if { read -r size model; } 2>/dev/null < <(lsblk -d -n -o SIZE,MODEL "$canonical" 2>/dev/null); then
+                size="${size// /}"
+                model="${model// /}"
+                [[ -z "$model" ]] && model="Unknown"
+                disk_ids+=("$disk_id ($canonical, $size, $model)")
+                seen_devices+=("$canonical")
+            fi
+        done < <(find /dev/disk/by-id -maxdepth 1 -type l 2>/dev/null | sort)
+    fi
+    
+    if [ ${#disk_ids[@]} -eq 0 ]; then
+        print_msg "$RED" "No disks found."
+        return 1
+    fi
+
+    print_msg "$BLUE" "Available disks:"
+    for i in "${!disk_ids[@]}"; do
+        disk=${disk_ids[$i]}
+        usage=$(get_disk_usage "$disk")
+        status=$( [ -z "$usage" ] && echo "Not in use" || echo "In use: $usage" )
+        printf "%2d) %s - %s\n" "$i" "$disk" "$status"
+    done
+
+    print_msg "$BLUE" "Enter disk numbers to zap (space-separated, or 'q' to quit):"
+    read -r selection
+    if [ "$selection" = "q" ]; then
+        print_msg "$GREEN" "Operation cancelled."
+        return
+    fi
+
+    for num in $selection; do
+        if [[ $num =~ ^[0-9]+$ ]] && [ $num -lt ${#disk_ids[@]} ]; then
+            disk=${disk_ids[$num]}
+            usage=$(get_disk_usage "$disk")
+            if [ -z "$usage" ]; then
+                zap_disk "$disk"
+            else
+                print_msg "$RED" "Disk $disk is in use: $usage"
+                if echo "$usage" | grep -q "mounted"; then
+                    print_msg "$RED" "Warning: Zapping a mounted disk can lead to system instability."
+                fi
+                if echo "$usage" | grep -q "ZFS pool"; then
+                    print_msg "$RED" "Warning: Zapping a disk in an imported ZFS pool can corrupt the pool."
+                fi
+                print_msg "$YELLOW" "Are you sure you want to zap $disk? This will destroy all data on it. (y/N)"
+                read -r confirm
+                if [ "$confirm" = "y" ]; then
+                    zap_disk "$disk"
+                else
+                    print_msg "$YELLOW" "Skipping $disk"
+                fi
+            fi
+        else
+            print_msg "$RED" "Invalid selection: $num"
+        fi
+    done
 }
 
 # Function to show detailed information about a specific disk
@@ -253,17 +617,17 @@ show_disk_info() {
     lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL "/dev/$disk_name"
     
     echo -e "\nPARTITION TABLE:"
-    sudo fdisk -l "/dev/$disk_name" 2>/dev/null || print_msg "$YELLOW" "Cannot get partition info (requires sudo)."
+    run_cmd fdisk -l "/dev/$disk_name" 2>/dev/null || print_msg "$YELLOW" "Cannot get partition info (requires root privileges)."
     
     echo -e "\nSMART INFO (if available):"
     if command -v smartctl &> /dev/null; then
-        sudo smartctl -a "/dev/$disk_name" 2>/dev/null || print_msg "$YELLOW" "Cannot get SMART info (requires sudo or smartmontools)."
+        run_cmd smartctl -a "/dev/$disk_name" 2>/dev/null || print_msg "$YELLOW" "Cannot get SMART info (requires root privileges or smartmontools)."
     else
-        print_msg "$YELLOW" "smartmontools not installed. Install with: sudo apt install smartmontools"
+        print_msg "$YELLOW" "smartmontools not installed. Install with: apt install smartmontools"
     fi
 }
 
-# Function to check if disks are in use
+# Enhanced disk usage checking (legacy compatibility)
 check_disk_usage() {
     local disk=$1
     
@@ -319,7 +683,7 @@ create_zfs_pool() {
     fi
     
     # Check if pool already exists
-    if zpool list -H -o name | grep -q "^$pool_name$"; then
+    if zpool list -H -o name 2>/dev/null | grep -q "^$pool_name$"; then
         print_msg "$RED" "A pool named '$pool_name' already exists."
         return 1
     fi
@@ -355,15 +719,33 @@ create_zfs_pool() {
         
         # Convert short IDs to full paths
         selected_disks=()
+        invalid_disks=()
         for disk in $selected_disks_input; do
             full_path="/dev/disk/by-id/$disk"
             if [ -L "$full_path" ]; then
                 selected_disks+=("$full_path")
             else
-                print_msg "$RED" "Disk ID '$disk' not found. Please verify the ID."
-                return 1
+                invalid_disks+=("$disk")
             fi
         done
+        
+        # Handle invalid disk IDs
+        if [ ${#invalid_disks[@]} -gt 0 ]; then
+            print_msg "$RED" "The following disk IDs were not found:"
+            for invalid_disk in "${invalid_disks[@]}"; do
+                echo "  - $invalid_disk"
+            done
+            print_msg "$YELLOW" "Available disk IDs are:"
+            # Show available disk IDs (excluding CD-ROMs and partitions)
+            find /dev/disk/by-id -maxdepth 1 -type l 2>/dev/null | sort | while read -r disk_path; do
+                disk_basename=$(basename "$disk_path")
+                if [[ ! "$disk_basename" =~ -part[0-9]+$ ]] && [[ ! "$disk_basename" =~ cdrom|dvd ]] && [[ -b "$(readlink -f "$disk_path")" ]]; then
+                    echo "  - $disk_basename"
+                fi
+            done
+            print_msg "$YELLOW" "Please re-run the pool creation and use the correct disk IDs."
+            return 1
+        fi
     else
         print_msg "$YELLOW" "Available disks:"
         lsblk -d -o NAME,SIZE,MODEL | grep -v "loop"
@@ -467,9 +849,9 @@ create_zfs_pool() {
             options="$options -O atime=off"
         fi
         
-        print_msg "$YELLOW" "Additional custom options (e.g., '-O recordsize=128K'):"
+        print_msg "$YELLOW" "Additional custom options (e.g., '-O recordsize=128K', or press Enter for none):"
         read -r custom_options
-        if [ -n "$custom_options" ]; then
+        if [ -n "$custom_options" ] && [[ ! "$custom_options" =~ ^[Nn][Oo]?$ ]]; then
             options="$options $custom_options"
         fi
     else
@@ -489,19 +871,27 @@ create_zfs_pool() {
     
     if [[ $confirm =~ ^[Yy]$ ]]; then
         # Construct the zpool create command
-        cmd="sudo zpool create $options $pool_name"
-        if [ -n "$pool_type" ]; then
-            cmd="$cmd $pool_type"
+        local cmd_parts=("zpool" "create" "$pool_name")
+        
+        # Add options
+        if [ -n "$options" ]; then
+            # Split options and add them
+            read -ra option_array <<< "$options"
+            cmd_parts+=("${option_array[@]}")
         fi
         
-        for disk in "${selected_disks[@]}"; do
-            cmd="$cmd $disk"
-        done
+        # Add pool type
+        if [ -n "$pool_type" ]; then
+            cmd_parts+=("$pool_type")
+        fi
         
-        print_msg "$BLUE" "Executing: $cmd"
+        # Add disks
+        cmd_parts+=("${selected_disks[@]}")
+        
+        print_msg "$BLUE" "Executing: run_cmd ${cmd_parts[*]}"
         
         # Execute the command
-        if eval "$cmd"; then
+        if run_cmd "${cmd_parts[@]}"; then
             print_msg "$GREEN" "Successfully created ZFS pool '$pool_name'."
             echo "Pool status:"
             zpool status "$pool_name"
@@ -532,7 +922,7 @@ show_pool_status() {
         if [ -z "$pool_name" ]; then
             zpool status
         else
-            if zpool list -H -o name | grep -q "^$pool_name$"; then
+            if zpool list -H -o name 2>/dev/null | grep -q "^$pool_name$"; then
                 zpool status "$pool_name"
                 echo
                 zfs list -r "$pool_name"
@@ -565,7 +955,7 @@ destroy_pool() {
         return 1
     fi
     
-    if ! zpool list -H -o name | grep -q "^$pool_name$"; then
+    if ! zpool list -H -o name 2>/dev/null | grep -q "^$pool_name$"; then
         print_msg "$RED" "Pool '$pool_name' not found."
         return 1
     fi
@@ -587,9 +977,9 @@ destroy_pool() {
         force_option="-f"
     fi
     
-    print_msg "$BLUE" "Executing: sudo zpool destroy $force_option $pool_name"
+    print_msg "$BLUE" "Executing: run_cmd zpool destroy $force_option $pool_name"
     
-    if sudo zpool destroy $force_option "$pool_name"; then
+    if run_cmd zpool destroy $force_option "$pool_name"; then
         print_msg "$GREEN" "Successfully destroyed ZFS pool '$pool_name'."
     else
         print_msg "$RED" "Failed to destroy ZFS pool. See error above."
@@ -623,7 +1013,7 @@ export_import_pool() {
                 return 1
             fi
             
-            if ! zpool list -H -o name | grep -q "^$pool_name$"; then
+            if ! zpool list -H -o name 2>/dev/null | grep -q "^$pool_name$"; then
                 print_msg "$RED" "Pool '$pool_name' not found."
                 return 1
             fi
@@ -636,9 +1026,9 @@ export_import_pool() {
                 force_option="-f"
             fi
             
-            print_msg "$BLUE" "Executing: sudo zpool export $force_option $pool_name"
+            print_msg "$BLUE" "Executing: run_cmd zpool export $force_option $pool_name"
             
-            if sudo zpool export $force_option "$pool_name"; then
+            if run_cmd zpool export $force_option "$pool_name"; then
                 print_msg "$GREEN" "Successfully exported ZFS pool '$pool_name'."
             else
                 print_msg "$RED" "Failed to export ZFS pool. See error above."
@@ -650,7 +1040,7 @@ export_import_pool() {
             # Import pool
             print_msg "$BLUE" "Scanning for importable pools..."
             
-            if ! sudo zpool import; then
+            if ! run_cmd zpool import; then
                 print_msg "$RED" "No importable pools found or error scanning."
                 return 1
             fi
@@ -675,9 +1065,9 @@ export_import_pool() {
                 fi
             fi
             
-            print_msg "$BLUE" "Executing: sudo zpool import $rename_option $pool_name"
+            print_msg "$BLUE" "Executing: run_cmd zpool import $rename_option $pool_name"
             
-            if sudo zpool import $rename_option "$pool_name"; then
+            if run_cmd zpool import $rename_option "$pool_name"; then
                 print_msg "$GREEN" "Successfully imported ZFS pool."
             else
                 print_msg "$RED" "Failed to import ZFS pool. See error above."
@@ -712,14 +1102,14 @@ scrub_pool() {
         return 1
     fi
     
-    if ! zpool list -H -o name | grep -q "^$pool_name$"; then
+    if ! zpool list -H -o name 2>/dev/null | grep -q "^$pool_name$"; then
         print_msg "$RED" "Pool '$pool_name' not found."
         return 1
     fi
     
-    print_msg "$BLUE" "Executing: sudo zpool scrub $pool_name"
+    print_msg "$BLUE" "Executing: run_cmd zpool scrub $pool_name"
     
-    if sudo zpool scrub "$pool_name"; then
+    if run_cmd zpool scrub "$pool_name"; then
         print_msg "$GREEN" "Scrub started on pool '$pool_name'."
         print_msg "$GREEN" "You can check the status with 'zpool status $pool_name'."
     else
@@ -740,14 +1130,15 @@ main_menu() {
         echo "2) Check ZFS version"
         echo "3) List disks by ID"
         echo "4) Show detailed disk information"
-        echo "5) Create a ZFS pool"
-        echo "6) Show ZFS pool status"
-        echo "7) Destroy a ZFS pool"
-        echo "8) Export/Import a ZFS pool"
-        echo "9) Scrub a ZFS pool"
+        echo "5) Zap/Wipe disks"
+        echo "6) Create a ZFS pool"
+        echo "7) Show ZFS pool status"
+        echo "8) Destroy a ZFS pool"
+        echo "9) Export/Import a ZFS pool"
+        echo "10) Scrub a ZFS pool"
         echo "0) Exit"
         echo
-        print_msg "$YELLOW" "Enter your choice [0-9]:"
+        print_msg "$YELLOW" "Enter your choice [0-10]:"
         read -r choice
         
         case $choice in
@@ -755,11 +1146,12 @@ main_menu() {
             2) check_zfs_version ;;
             3) list_disks_by_id ;;
             4) show_disk_info ;;
-            5) create_zfs_pool ;;
-            6) show_pool_status ;;
-            7) destroy_pool ;;
-            8) export_import_pool ;;
-            9) scrub_pool ;;
+            5) zap_disks ;;
+            6) create_zfs_pool ;;
+            7) show_pool_status ;;
+            8) destroy_pool ;;
+            9) export_import_pool ;;
+            10) scrub_pool ;;
             0) echo "Exiting."; exit 0 ;;
             *) print_msg "$RED" "Invalid choice. Please try again." ;;
         esac
