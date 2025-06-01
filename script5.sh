@@ -771,48 +771,6 @@ create_zfs_pool() {
         return 1
     fi
     
-    # Check minimum disk requirements based on pool type
-    case $pool_type in
-        "mirror"|"multi_mirror")
-            if [ ${#selected_disks[@]} -lt 2 ]; then
-                print_msg "$RED" "Mirror requires at least 2 disks."
-                return 1
-            fi
-            ;;
-        "raidz")
-            if [ ${#selected_disks[@]} -lt 3 ]; then
-                print_msg "$RED" "RAIDZ requires at least 3 disks."
-                return 1
-            fi
-            ;;
-        "raidz2")
-            if [ ${#selected_disks[@]} -lt 4 ]; then
-                print_msg "$RED" "RAIDZ2 requires at least 4 disks."
-                return 1
-            fi
-            ;;
-        "raidz3")
-            if [ ${#selected_disks[@]} -lt 5 ]; then
-                print_msg "$RED" "RAIDZ3 requires at least 5 disks."
-                return 1
-            fi
-            ;;
-    esac
-    
-    # Check if any of the selected disks are in use
-    for disk in "${selected_disks[@]}"; do
-        real_device=$(readlink -f "$disk" || echo "$disk")
-        if ! check_disk_usage "$real_device"; then
-            print_msg "$YELLOW" "Do you want to continue anyway? (y/n)"
-            read -r continue_choice
-            if [[ ! $continue_choice =~ ^[Yy]$ ]]; then
-                print_msg "$RED" "Pool creation aborted."
-                return 1
-            fi
-            break
-        fi
-    done
-    
     # Step 3.5: Configure mirror vdevs (if mirror type selected)
     mirror_vdevs=()
     local disks_per_mirror=2  # Default value
@@ -910,6 +868,48 @@ create_zfs_pool() {
                 ;;
         esac
     fi
+    
+    # Check minimum disk requirements based on pool type
+    case $pool_type in
+        "mirror"|"multi_mirror")
+            if [ ${#selected_disks[@]} -lt 2 ]; then
+                print_msg "$RED" "Mirror requires at least 2 disks."
+                return 1
+            fi
+            ;;
+        "raidz")
+            if [ ${#selected_disks[@]} -lt 3 ]; then
+                print_msg "$RED" "RAIDZ requires at least 3 disks."
+                return 1
+            fi
+            ;;
+        "raidz2")
+            if [ ${#selected_disks[@]} -lt 4 ]; then
+                print_msg "$RED" "RAIDZ2 requires at least 4 disks."
+                return 1
+            fi
+            ;;
+        "raidz3")
+            if [ ${#selected_disks[@]} -lt 5 ]; then
+                print_msg "$RED" "RAIDZ3 requires at least 5 disks."
+                return 1
+            fi
+            ;;
+    esac
+    
+    # Check if any of the selected disks are in use
+    for disk in "${selected_disks[@]}"; do
+        real_device=$(readlink -f "$disk" || echo "$disk")
+        if ! check_disk_usage "$real_device"; then
+            print_msg "$YELLOW" "Do you want to continue anyway? (y/n)"
+            read -r continue_choice
+            if [[ ! $continue_choice =~ ^[Yy]$ ]]; then
+                print_msg "$RED" "Pool creation aborted."
+                return 1
+            fi
+            break
+        fi
+    done
     
     # Step 4: Additional devices (cache, log, spare)
     print_msg "$YELLOW" "Do you want to add additional devices? (y/n)"
@@ -1110,7 +1110,6 @@ create_zfs_pool() {
         fi
     fi
     
-    # Step 5: Additional options
     # Step 5: Additional options
     print_msg "$YELLOW" "Do you want to specify additional pool options? (y/n)"
     read -r add_options_choice
@@ -1503,6 +1502,576 @@ scrub_pool() {
     fi
 }
 
+# Function to add/remove devices to/from existing ZFS pool
+manage_pool_devices() {
+    if ! check_zfs_installed; then
+        return 1
+    fi
+    
+    print_msg "$BLUE" "Manage Devices in Existing ZFS Pool"
+    print_msg "$BLUE" "==================================="
+    
+    # List existing pools
+    if ! zpool list 2>/dev/null | grep -q .; then
+        print_msg "$RED" "No ZFS pools found."
+        return 1
+    fi
+    
+    print_msg "$GREEN" "Existing ZFS pools:"
+    zpool list -o name,size,allocated,free,health
+    echo
+    
+    print_msg "$YELLOW" "Enter the name of the pool to modify:"
+    read -r pool_name
+    
+    if [ -z "$pool_name" ]; then
+        print_msg "$RED" "No pool name specified."
+        return 1
+    fi
+    
+    # Verify pool exists
+    if ! zpool list -H -o name 2>/dev/null | grep -q "^$pool_name$"; then
+        print_msg "$RED" "Pool '$pool_name' not found."
+        return 1
+    fi
+    
+    # Show current pool status
+    print_msg "$BLUE" "Current pool status:"
+    zpool status "$pool_name"
+    echo
+    
+    # Ask whether to add or remove devices
+    print_msg "$YELLOW" "What do you want to do?"
+    echo "1) Add devices to pool"
+    echo "2) Remove devices from pool"
+    read -r action_choice
+    
+    case $action_choice in
+        1) add_devices_action "$pool_name" ;;
+        2) remove_devices_action "$pool_name" ;;
+        *) print_msg "$RED" "Invalid selection."; return 1 ;;
+    esac
+}
+
+# Function to handle adding devices
+add_devices_action() {
+    local pool_name="$1"
+    
+    # Ask what type of device to add
+    print_msg "$YELLOW" "What type of device do you want to add?"
+    echo "1) Cache device (L2ARC) - for read acceleration"
+    echo "2) Log device (SLOG/ZIL) - for write acceleration" 
+    echo "3) Spare device - hot spare for automatic failover"
+    echo "4) Data device (vdev expansion) - add more storage"
+    read -r device_type_choice
+    
+    case $device_type_choice in
+        1) device_type="cache"; device_description="cache (L2ARC)" ;;
+        2) device_type="log"; device_description="log (SLOG/ZIL)" ;;
+        3) device_type="spare"; device_description="spare" ;;
+        4) device_type="data"; device_description="data vdev" ;;
+        *) print_msg "$RED" "Invalid selection."; return 1 ;;
+    esac
+    
+    # Function to check if a device is already in any ZFS pool
+    is_device_in_any_pool() {
+        local device_path="$1"
+        local device_basename=$(basename "$device_path")
+        
+        # Get all devices from all pools
+        local pool_devices
+        pool_devices=$(zpool status 2>/dev/null | grep -E "^\s+" | awk '{print $1}' | grep -v "pool:\|state:\|config:\|errors:\|NAME\|mirror-\|raidz")
+        
+        while IFS= read -r pool_device; do
+            [[ -z "$pool_device" ]] && continue
+            
+            # Check direct match or basename match
+            if [[ "$device_path" == "$pool_device" ]] || [[ "$device_basename" == "$(basename "$pool_device")" ]]; then
+                return 0
+            fi
+            
+            # Check if pool device is disk-by-id format and build full path to compare
+            if [[ "$pool_device" =~ ^(scsi-|ata-|wwn-|nvme-) ]]; then
+                local full_pool_path="/dev/disk/by-id/$pool_device"
+                if [[ "$device_path" == "$full_pool_path" ]]; then
+                    return 0
+                fi
+            fi
+        done <<< "$pool_devices"
+        
+        return 1
+    }
+    
+    # Function to show available devices for addition (adapted from working pool creation logic)
+    show_available_devices_for_addition() {
+        print_msg "$BLUE" "Available devices for $device_description (excluding devices already in use):"
+        
+        local found_any=false
+        
+        while IFS= read -r disk_path; do
+            local disk_basename=$(basename "$disk_path")
+            if [[ ! "$disk_basename" =~ -part[0-9]+$ ]] && [[ ! "$disk_basename" =~ cdrom|dvd ]] && [[ -b "$(readlink -f "$disk_path" 2>/dev/null)" ]]; then
+                if ! is_device_in_any_pool "$disk_path"; then
+                    local canonical_path=$(readlink -f "$disk_path")
+                    # Get size and model info
+                    local size model
+                    if { read -r size model; } 2>/dev/null < <(lsblk -d -n -o SIZE,MODEL "$canonical_path" 2>/dev/null); then
+                        size="${size// /}"
+                        model="${model// /}"
+                        [[ -z "$model" ]] && model="Unknown"
+                        printf "  %-60s (%s, %s, %s)\n" "$disk_basename" "$canonical_path" "$size" "$model"
+                        found_any=true
+                    fi
+                fi
+            fi
+        done < <(find /dev/disk/by-id -maxdepth 1 -type l 2>/dev/null | sort)
+        
+        if [ "$found_any" = false ]; then
+            print_msg "$YELLOW" "  No available devices found."
+            return 1
+        fi
+        
+        return 0
+    }
+    
+    # Show available devices
+    if ! show_available_devices_for_addition; then
+        print_msg "$RED" "No devices available to add. All devices may already be in use."
+        return 1
+    fi
+    
+    echo
+    
+    # Handle different device types for adding
+    case $device_type in
+        "cache"|"spare")
+            print_msg "$YELLOW" "Enter device ID(s) to add as $device_description (space-separated):"
+            read -r device_input
+            
+            if [ -z "$device_input" ]; then
+                print_msg "$RED" "No devices specified."
+                return 1
+            fi
+            
+            # Build device paths
+            devices_to_add=()
+            for device in $device_input; do
+                full_path="/dev/disk/by-id/$device"
+                if [ -L "$full_path" ]; then
+                    devices_to_add+=("$full_path")
+                else
+                    print_msg "$RED" "Device '$device' not found."
+                    return 1
+                fi
+            done
+            
+            # Confirm and execute
+            print_msg "$BLUE" "Adding ${#devices_to_add[@]} $device_description device(s) to pool '$pool_name':"
+            for device in "${devices_to_add[@]}"; do
+                echo "  - $device"
+            done
+            
+            print_msg "$YELLOW" "Proceed with adding these devices? (y/n)"
+            read -r confirm
+            
+            if [[ $confirm =~ ^[Yy]$ ]]; then
+                cmd_parts=("zpool" "add" "$pool_name" "$device_type")
+                cmd_parts+=("${devices_to_add[@]}")
+                
+                print_msg "$BLUE" "Executing: run_cmd ${cmd_parts[*]}"
+                
+                if run_cmd "${cmd_parts[@]}"; then
+                    print_msg "$GREEN" "Successfully added $device_description device(s) to pool '$pool_name'."
+                    echo "Updated pool status:"
+                    zpool status "$pool_name"
+                else
+                    print_msg "$RED" "Failed to add devices. See error above."
+                    return 1
+                fi
+            else
+                print_msg "$YELLOW" "Operation cancelled."
+            fi
+            ;;
+            
+        "log")
+            print_msg "$BLUE" "Log devices can be single or mirrored for redundancy."
+            print_msg "$YELLOW" "How many log devices do you want to add? (1 for single, 2+ for mirror):"
+            read -r log_count
+            
+            while ! [[ $log_count =~ ^[0-9]+$ ]] || [ $log_count -eq 0 ]; do
+                print_msg "$RED" "Please enter a valid number (1 or higher):"
+                read -r log_count
+            done
+            
+            print_msg "$YELLOW" "Enter $log_count log device ID(s) (space-separated):"
+            read -r device_input
+            
+            device_array=($device_input)
+            while [ ${#device_array[@]} -ne $log_count ]; do
+                print_msg "$RED" "Expected $log_count devices but got ${#device_array[@]}. Please try again:"
+                read -r device_input
+                device_array=($device_input)
+            done
+            
+            # Build device paths
+            devices_to_add=()
+            for device in "${device_array[@]}"; do
+                full_path="/dev/disk/by-id/$device"
+                if [ -L "$full_path" ]; then
+                    devices_to_add+=("$full_path")
+                else
+                    print_msg "$RED" "Device '$device' not found."
+                    return 1
+                fi
+            done
+            
+            # Confirm and execute
+            print_msg "$BLUE" "Adding ${#devices_to_add[@]} log device(s) to pool '$pool_name':"
+            for device in "${devices_to_add[@]}"; do
+                echo "  - $device"
+            done
+            
+            print_msg "$YELLOW" "Proceed with adding these log devices? (y/n)"
+            read -r confirm
+            
+            if [[ $confirm =~ ^[Yy]$ ]]; then
+                cmd_parts=("zpool" "add" "$pool_name" "log")
+                
+                # Add mirror keyword if multiple devices
+                if [ ${#devices_to_add[@]} -gt 1 ]; then
+                    cmd_parts+=("mirror")
+                fi
+                
+                cmd_parts+=("${devices_to_add[@]}")
+                
+                print_msg "$BLUE" "Executing: run_cmd ${cmd_parts[*]}"
+                
+                if run_cmd "${cmd_parts[@]}"; then
+                    print_msg "$GREEN" "Successfully added log device(s) to pool '$pool_name'."
+                    echo "Updated pool status:"
+                    zpool status "$pool_name"
+                else
+                    print_msg "$RED" "Failed to add log devices. See error above."
+                    return 1
+                fi
+            else
+                print_msg "$YELLOW" "Operation cancelled."
+            fi
+            ;;
+            
+        "data")
+            print_msg "$BLUE" "Adding data devices will expand the pool's storage capacity."
+            print_msg "$YELLOW" "What type of vdev do you want to add?"
+            echo "1) Single disk (stripe) - no redundancy, maximum space"
+            echo "2) Mirror vdev - redundancy with 2+ disks"
+            echo "3) RAIDZ vdev - parity protection with 3+ disks"
+            echo "4) RAIDZ2 vdev - double parity with 4+ disks"
+            echo "5) RAIDZ3 vdev - triple parity with 5+ disks"
+            read -r vdev_type_choice
+            
+            case $vdev_type_choice in
+                1) vdev_type=""; vdev_name="stripe"; min_disks=1 ;;
+                2) vdev_type="mirror"; vdev_name="mirror"; min_disks=2 ;;
+                3) vdev_type="raidz"; vdev_name="raidz"; min_disks=3 ;;
+                4) vdev_type="raidz2"; vdev_name="raidz2"; min_disks=4 ;;
+                5) vdev_type="raidz3"; vdev_name="raidz3"; min_disks=5 ;;
+                *) print_msg "$RED" "Invalid selection."; return 1 ;;
+            esac
+            
+            print_msg "$YELLOW" "Enter device ID(s) for the new $vdev_name vdev (space-separated, minimum $min_disks):"
+            read -r device_input
+            
+            device_array=($device_input)
+            if [ ${#device_array[@]} -lt $min_disks ]; then
+                print_msg "$RED" "$vdev_name vdev requires at least $min_disks disk(s)."
+                return 1
+            fi
+            
+            # Build device paths
+            devices_to_add=()
+            for device in "${device_array[@]}"; do
+                full_path="/dev/disk/by-id/$device"
+                if [ -L "$full_path" ]; then
+                    devices_to_add+=("$full_path")
+                else
+                    print_msg "$RED" "Device '$device' not found."
+                    return 1
+                fi
+            done
+            
+            # Confirm and execute
+            print_msg "$BLUE" "Adding $vdev_name vdev with ${#devices_to_add[@]} device(s) to pool '$pool_name':"
+            for device in "${devices_to_add[@]}"; do
+                echo "  - $device"
+            done
+            
+            print_msg "$YELLOW" "Proceed with adding this vdev? (y/n)"
+            read -r confirm
+            
+            if [[ $confirm =~ ^[Yy]$ ]]; then
+                cmd_parts=("zpool" "add" "$pool_name")
+                
+                # Add vdev type if not stripe
+                if [ -n "$vdev_type" ]; then
+                    cmd_parts+=("$vdev_type")
+                fi
+                
+                cmd_parts+=("${devices_to_add[@]}")
+                
+                print_msg "$BLUE" "Executing: run_cmd ${cmd_parts[*]}"
+                
+                if run_cmd "${cmd_parts[@]}"; then
+                    print_msg "$GREEN" "Successfully added $vdev_name vdev to pool '$pool_name'."
+                    echo "Updated pool status:"
+                    zpool status "$pool_name"
+                else
+                    print_msg "$RED" "Failed to add vdev. See error above."
+                    return 1
+                fi
+            else
+                print_msg "$YELLOW" "Operation cancelled."
+            fi
+            ;;
+    esac
+}
+
+# Function to handle removing devices
+remove_devices_action() {
+    local pool_name="$1"
+    
+    print_msg "$BLUE" "Device Removal from Pool '$pool_name'"
+    print_msg "$BLUE" "======================================"
+    
+    # Get current pool devices categorized by type
+    print_msg "$YELLOW" "Current devices in pool '$pool_name':"
+    
+    # Parse zpool status to categorize devices and detect vdev structure
+    local cache_devices=()
+    local log_devices=()
+    local spare_devices=()
+    local data_devices=()
+    local log_vdevs=()  # Track complete log vdevs
+    local current_section="data"
+    local current_vdev=""
+    local current_vdev_devices=()
+    
+    while IFS= read -r line; do
+        # Detect sections by looking for section headers
+        if [[ "$line" =~ ^[[:space:]]*cache[[:space:]]*$ ]]; then
+            current_section="cache"
+            current_vdev=""
+            continue
+        elif [[ "$line" =~ ^[[:space:]]*logs[[:space:]]*$ ]]; then
+            current_section="logs"
+            current_vdev=""
+            continue
+        elif [[ "$line" =~ ^[[:space:]]*spares[[:space:]]*$ ]]; then
+            current_section="spares"
+            current_vdev=""
+            continue
+        elif [[ "$line" =~ ^[[:space:]]*pool:[[:space:]] ]]; then
+            current_section="data"
+            current_vdev=""
+            continue
+        elif [[ "$line" =~ ^[[:space:]]*config:[[:space:]]*$ ]] || [[ "$line" =~ ^[[:space:]]*NAME[[:space:]] ]]; then
+            current_section="data"
+            current_vdev=""
+            continue
+        fi
+        
+        # Detect vdev labels (mirror-X, raidz-X) in logs section
+        if [[ "$current_section" == "logs" ]] && [[ "$line" =~ ^[[:space:]]+(mirror-|raidz)[0-9]+ ]]; then
+            # Save previous vdev if exists
+            if [[ -n "$current_vdev" ]] && [[ ${#current_vdev_devices[@]} -gt 0 ]]; then
+                log_vdevs+=("$current_vdev:${current_vdev_devices[*]}")
+            fi
+            
+            current_vdev=$(echo "$line" | awk '{print $1}')
+            current_vdev_devices=()
+            continue
+        fi
+        
+        # Extract device names
+        if [[ "$line" =~ ^[[:space:]]+(scsi-|ata-|wwn-|nvme-|/dev/) ]]; then
+            local device=$(echo "$line" | awk '{print $1}')
+            [[ -z "$device" ]] && continue
+            
+            case $current_section in
+                "cache") cache_devices+=("$device") ;;
+                "logs") 
+                    if [[ -n "$current_vdev" ]]; then
+                        current_vdev_devices+=("$device")
+                    else
+                        log_devices+=("$device")  # Single log device
+                    fi
+                    ;;
+                "spares") spare_devices+=("$device") ;;
+                "data") data_devices+=("$device") ;;
+            esac
+        fi
+    done < <(zpool status "$pool_name")
+    
+    # Save the last log vdev if exists
+    if [[ -n "$current_vdev" ]] && [[ ${#current_vdev_devices[@]} -gt 0 ]]; then
+        log_vdevs+=("$current_vdev:${current_vdev_devices[*]}")
+    fi
+    
+    # Show removable devices by category
+    local removable_found=false
+    
+    if [ ${#cache_devices[@]} -gt 0 ]; then
+        print_msg "$GREEN" "Cache devices (safe to remove):"
+        for i in "${!cache_devices[@]}"; do
+            printf "  c%d) %s\n" "$i" "${cache_devices[$i]}"
+        done
+        removable_found=true
+    fi
+    
+    # Handle log devices (both individual and vdevs)
+    if [ ${#log_devices[@]} -gt 0 ] || [ ${#log_vdevs[@]} -gt 0 ]; then
+        print_msg "$GREEN" "Log devices (safe to remove):"
+        
+        # Show individual log devices
+        for i in "${!log_devices[@]}"; do
+            printf "  l%d) %s (individual device)\n" "$i" "${log_devices[$i]}"
+        done
+        
+        # Show log vdevs (mirrors/raidz)
+        for i in "${!log_vdevs[@]}"; do
+            local vdev_info="${log_vdevs[$i]}"
+            local vdev_name="${vdev_info%%:*}"
+            local vdev_devices="${vdev_info##*:}"
+            printf "  v%d) %s (complete vdev: %s)\n" "$i" "$vdev_name" "$vdev_devices"
+        done
+        
+        removable_found=true
+    fi
+    
+    if [ ${#spare_devices[@]} -gt 0 ]; then
+        print_msg "$GREEN" "Spare devices (safe to remove):"
+        for i in "${!spare_devices[@]}"; do
+            printf "  s%d) %s\n" "$i" "${spare_devices[$i]}"
+        done
+        removable_found=true
+    fi
+    
+    if [ ${#data_devices[@]} -gt 0 ]; then
+        print_msg "$YELLOW" "Data devices (removal requires caution - only complete vdevs can be removed):"
+        for i in "${!data_devices[@]}"; do
+            printf "  d%d) %s\n" "$i" "${data_devices[$i]}"
+        done
+    fi
+    
+    if [ "$removable_found" = false ]; then
+        print_msg "$YELLOW" "No safely removable devices found (cache/log/spare)."
+        print_msg "$YELLOW" "Data device removal requires advanced knowledge and may not be supported."
+        return 0
+    fi
+    
+    echo
+    print_msg "$BLUE" "IMPORTANT: For mirrored log devices, you must remove the entire vdev (v0, v1, etc.)"
+    print_msg "$BLUE" "Individual devices (l0, l1) can only be removed if they're not part of a mirror."
+    echo
+    print_msg "$YELLOW" "Enter device identifier to remove:"
+    print_msg "$YELLOW" "  - 'c0' for cache device"
+    print_msg "$YELLOW" "  - 'l0' for individual log device"  
+    print_msg "$YELLOW" "  - 'v0' for complete log vdev (mirror/raidz)"
+    print_msg "$YELLOW" "  - 's0' for spare device"
+    print_msg "$YELLOW" "  - 'q' to quit:"
+    read -r device_selection
+    
+    if [ "$device_selection" = "q" ]; then
+        print_msg "$GREEN" "Operation cancelled."
+        return 0
+    fi
+    
+    # Parse selection
+    local device_to_remove=""
+    local removal_type=""
+    local device_description=""
+    
+    if [[ "$device_selection" =~ ^c([0-9]+)$ ]]; then
+        local index=${BASH_REMATCH[1]}
+        if [ $index -lt ${#cache_devices[@]} ]; then
+            device_to_remove="${cache_devices[$index]}"
+            removal_type="device"
+            device_description="cache device"
+        fi
+    elif [[ "$device_selection" =~ ^l([0-9]+)$ ]]; then
+        local index=${BASH_REMATCH[1]}
+        if [ $index -lt ${#log_devices[@]} ]; then
+            device_to_remove="${log_devices[$index]}"
+            removal_type="device"
+            device_description="log device"
+        fi
+    elif [[ "$device_selection" =~ ^v([0-9]+)$ ]]; then
+        local index=${BASH_REMATCH[1]}
+        if [ $index -lt ${#log_vdevs[@]} ]; then
+            local vdev_info="${log_vdevs[$index]}"
+            device_to_remove="${vdev_info%%:*}"  # Get vdev name (mirror-X)
+            removal_type="vdev"
+            device_description="log vdev"
+        fi
+    elif [[ "$device_selection" =~ ^s([0-9]+)$ ]]; then
+        local index=${BASH_REMATCH[1]}
+        if [ $index -lt ${#spare_devices[@]} ]; then
+            device_to_remove="${spare_devices[$index]}"
+            removal_type="device"
+            device_description="spare device"
+        fi
+    elif [[ "$device_selection" =~ ^d([0-9]+)$ ]]; then
+        print_msg "$RED" "Data device removal is complex and potentially dangerous."
+        print_msg "$RED" "This requires advanced ZFS knowledge. Please use manual zpool remove commands."
+        return 1
+    fi
+    
+    if [ -z "$device_to_remove" ]; then
+        print_msg "$RED" "Invalid selection: $device_selection"
+        return 1
+    fi
+    
+    # Confirm removal
+    if [ "$removal_type" = "vdev" ]; then
+        print_msg "$BLUE" "About to remove complete $device_description: $device_to_remove"
+        print_msg "$YELLOW" "This will remove the entire mirrored log vdev and all its devices."
+        print_msg "$YELLOW" "The pool will fall back to using main storage for the intent log."
+    else
+        print_msg "$BLUE" "About to remove $device_description: $device_to_remove"
+        print_msg "$YELLOW" "This is generally safe for cache/log/spare devices."
+    fi
+    
+    print_msg "$YELLOW" "Are you sure you want to remove this ${removal_type}? (y/n)"
+    read -r confirm
+    
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        print_msg "$YELLOW" "Operation cancelled."
+        return 0
+    fi
+    
+    # Execute removal
+    print_msg "$BLUE" "Executing: run_cmd zpool remove $pool_name $device_to_remove"
+    
+    if run_cmd zpool remove "$pool_name" "$device_to_remove"; then
+        print_msg "$GREEN" "Successfully removed $device_description '$device_to_remove' from pool '$pool_name'."
+        echo "Updated pool status:"
+        zpool status "$pool_name"
+        if [ "$removal_type" = "vdev" ]; then
+            print_msg "$GREEN" "All devices from the removed vdev are now available for other uses."
+        else
+            print_msg "$GREEN" "The removed device is now available for other uses."
+        fi
+    else
+        print_msg "$RED" "Failed to remove ${removal_type}. See error above."
+        
+        if [ "$removal_type" = "device" ] && [[ "$device_description" == *"log"* ]]; then
+            print_msg "$YELLOW" "Note: If this log device is part of a mirror, you need to remove the entire vdev."
+            print_msg "$YELLOW" "Try using a 'v' selection instead (e.g., 'v0' for the complete log vdev)."
+        fi
+        
+        return 1
+    fi
+}
+
 # Main menu function
 main_menu() {
     while true; do
@@ -1521,9 +2090,10 @@ main_menu() {
         echo "8) Destroy a ZFS pool"
         echo "9) Export/Import a ZFS pool"
         echo "10) Scrub a ZFS pool"
+        echo "11) Manage pool devices (add/remove)"
         echo "0) Exit"
         echo
-        print_msg "$YELLOW" "Enter your choice [0-10]:"
+        print_msg "$YELLOW" "Enter your choice [0-11]:"
         read -r choice
         
         case $choice in
@@ -1537,6 +2107,7 @@ main_menu() {
             8) destroy_pool ;;
             9) export_import_pool ;;
             10) scrub_pool ;;
+            11) manage_pool_devices ;;
             0) echo "Exiting."; exit 0 ;;
             *) print_msg "$RED" "Invalid choice. Please try again." ;;
         esac
